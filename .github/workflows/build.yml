@@ -31,7 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Build
+      - name: Build debug
         run: cargo build --locked
 
       - name: Clippy
@@ -39,3 +39,15 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --check
+
+      - name: Build release
+        run: cargo build --locked --release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: artifact-${{ matrix.os }}
+          path: |
+              target/release/onedrive_slideshow*
+              target/**/release/onedrive_slideshow*
+          if-no-files-found: error

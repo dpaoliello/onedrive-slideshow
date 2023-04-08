@@ -1,5 +1,5 @@
 [package]
-name = "onedrive-slideshow"
+name = "onedrive_slideshow"
 version = "0.1.0"
 edition = "2021"
 
