@@ -64,7 +64,7 @@ jobs:
         run: cargo install cross
 
       - name: Build ARMv7
-        run: cross build --locked --release --target armv7-unknown-linux-musleabihf
+        run: cross build --locked --release --target armv7-unknown-linux-gnueabihf
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
