@@ -76,19 +76,24 @@ impl eframe::App for Slideshow {
         egui::CentralPanel::default().show(ctx, |ui|
             ui.centered_and_justified(|ui|
                  match &self.current_state {
-            Ok(AppState::LoadingImage) => {
-                ui.spinner();
-            }
-            Ok(AppState::HasImage(image)) => {
-                image.show_max_size(ui, ui.available_size());
-            }
-            Ok(AppState::WaitingForAuth(auth_url, code)) => {
-                ui.label(format!("Authorize the slideshow to read from your OneDrive by opening {auth_url} in a browser and entering the code {code}"));
-            }
-            Err(err) => {
-                ui.colored_label(ui.visuals().error_fg_color, format!("{err:?}")); // something went wrong
-            }
-        }));
+                    Ok(AppState::LoadingImage) => {
+                        ui.spinner();
+                    }
+                    Ok(AppState::HasImage(image)) => {
+                        let image_size = image.size_vec2();
+                        let screen_size = ui.available_size();
+                        let x_ratio = image_size.x / screen_size.x;
+                        let y_ratio = image_size.y / screen_size.y;
+
+                        image.show_size(ui, image_size / x_ratio.max(y_ratio));
+                    }
+                    Ok(AppState::WaitingForAuth(auth_url, code)) => {
+                        ui.label(format!("Authorize the slideshow to read from your OneDrive by opening {auth_url} in a browser and entering the code {code}"));
+                    }
+                    Err(err) => {
+                        ui.colored_label(ui.visuals().error_fg_color, format!("{err:?}")); // something went wrong
+                    }
+                }));
     }
 }
 
