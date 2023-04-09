@@ -85,6 +85,7 @@ impl eframe::App for Slideshow {
                         let x_ratio = image_size.x / screen_size.x;
                         let y_ratio = image_size.y / screen_size.y;
 
+                        ctx.set_cursor_icon(egui::CursorIcon::None);
                         image.show_size(ui, image_size / x_ratio.max(y_ratio));
                     }
                     Ok(AppState::WaitingForAuth(auth_url, code)) => {
