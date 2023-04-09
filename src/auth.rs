@@ -15,7 +15,7 @@ pub struct Authenticator {
     client: Client,
     access_token: Option<String>,
     refresh_token: Option<String>,
-    on_has_code: Sender<(String, String)>,
+    sender: Sender<AuthMessage>,
 }
 
 #[derive(Deserialize)]
@@ -45,13 +45,19 @@ enum TokenResponse {
     Failure(TokenResponseError),
 }
 
+#[derive(Debug)]
+pub enum AuthMessage {
+    HasClientCode(String, String),
+    Completed,
+}
+
 impl Authenticator {
-    pub fn new(on_has_code: Sender<(String, String)>) -> Self {
+    pub fn new(sender: Sender<AuthMessage>) -> Self {
         Self {
             client: Client::new(),
             access_token: None,
             refresh_token: None,
-            on_has_code,
+            sender,
         }
     }
 
@@ -86,8 +92,11 @@ impl Authenticator {
                     .await
                     .with_context(|| "Initial auth request")?;
 
-                self.on_has_code
-                    .send((device_response.verification_uri, device_response.user_code))
+                self.sender
+                    .send(AuthMessage::HasClientCode(
+                        device_response.verification_uri,
+                        device_response.user_code,
+                    ))
                     .await
                     .unwrap();
 
@@ -118,6 +127,7 @@ impl Authenticator {
                         }
                     }
 
+                    self.sender.send(AuthMessage::Completed).await.unwrap();
                     break token_response;
                 }
             };

@@ -16,6 +16,8 @@ use tokio::{
     time::Instant,
 };
 
+use crate::auth::AuthMessage;
+
 const DEFAULT_IMAGE_REFRESH_TIME: Duration = Duration::from_secs(1);
 const IMAGE_LIST_REFRESH_TIME: Duration = Duration::from_secs(60 * 60);
 
@@ -109,13 +111,25 @@ async fn image_load_loop(ui_sender: Sender<Result<AppState>>, ctx: egui::Context
     let captured_ui_sender = ui_sender.clone();
     let captured_ctx = ctx.clone();
     let _auth_manager = task::spawn(async move {
-        while let Some((auth_url, code)) = auth_receiver.recv().await {
-            send_update(
-                &captured_ui_sender,
-                &captured_ctx,
-                Ok(AppState::WaitingForAuth(auth_url, code)),
-            )
-            .await;
+        while let Some(message) = auth_receiver.recv().await {
+            match message {
+                AuthMessage::HasClientCode(auth_url, code) => {
+                    send_update(
+                        &captured_ui_sender,
+                        &captured_ctx,
+                        Ok(AppState::WaitingForAuth(auth_url, code)),
+                    )
+                    .await;
+                }
+                AuthMessage::Completed => {
+                    send_update(
+                        &captured_ui_sender,
+                        &captured_ctx,
+                        Ok(AppState::LoadingImage),
+                    )
+                    .await;
+                }
+            }
         }
     });
 
