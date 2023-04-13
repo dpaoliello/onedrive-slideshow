@@ -139,6 +139,7 @@ async fn image_load_loop(ui_sender: Sender<Result<AppState>>, ctx: egui::Context
             "https://login.microsoftonline.com/consumers/oauth2/v2.0",
         ),
         "https://graph.microsoft.com/v1.0/me/drive",
+        std::env::temp_dir().join("onedrive_slideshow"),
     );
     let mut all_images = None;
     loop {
@@ -197,7 +198,12 @@ async fn send_update<T>(sender: &Sender<T>, ctx: &egui::Context, message: T) {
 }
 
 #[tokio::test]
-async fn load_multiple_iamges() {
+async fn load_multiple_images() {
+    let temp_dir = std::env::temp_dir().join("onedrive_slideshow_test/load_multiple_images");
+    if temp_dir.exists() {
+        tokio::fs::remove_dir_all(&temp_dir).await.unwrap();
+    }
+
     let mut server = mockito::Server::new();
     let url = server.url();
 
@@ -256,7 +262,7 @@ async fn load_multiple_iamges() {
         .create();
 
     // First load should get the config and directory listing.
-    let mut image_loader = ImageLoader::new(crate::auth::test_authenticator(), &url);
+    let mut image_loader = ImageLoader::new(crate::auth::test_authenticator(), &url, temp_dir);
     let mut all_images = None;
     let actual_image = get_next_image(
         &mut image_loader,
@@ -283,14 +289,12 @@ async fn load_multiple_iamges() {
     thumbnail_mock.assert();
     download_mock.assert();
 
-    // Second load should re-use the listing.
+    // Second load should be entirely offline since it will use the cache.
     config_content_mock.remove();
     d1_folder_mock.remove();
     d1_image_mock.remove();
     thumbnail_mock.remove();
-    let thumbnail_mock = thumbnail_mock.create();
     download_mock.remove();
-    let download_mock = download_mock.create();
     let actual_image = get_next_image(
         &mut image_loader,
         Rect {
@@ -310,6 +314,4 @@ async fn load_multiple_iamges() {
         all_images.as_ref().unwrap().images,
         &["the_image".to_string()]
     );
-    thumbnail_mock.assert();
-    download_mock.assert();
 }

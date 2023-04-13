@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use reqwest::{StatusCode, Url};
-use std::ops::Deref;
 
 use crate::auth::Authenticator;
 
@@ -72,11 +72,7 @@ impl Client {
             .with_context(|| "Parsing response failed")
     }
 
-    pub async fn download(
-        &self,
-        authenticator: &mut Authenticator,
-        url: Url,
-    ) -> Result<impl Deref<Target = [u8]>> {
+    pub async fn download(&self, authenticator: &mut Authenticator, url: Url) -> Result<Bytes> {
         Ok(self
             .inner
             .get(url)
