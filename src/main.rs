@@ -133,7 +133,13 @@ async fn image_load_loop(ui_sender: Sender<Result<AppState>>, ctx: egui::Context
         }
     });
 
-    let mut loader = ImageLoader::new(Authenticator::new(auth_sender));
+    let mut loader = ImageLoader::new(
+        Authenticator::new(
+            auth_sender,
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0",
+        ),
+        "https://graph.microsoft.com/v1.0/me/drive",
+    );
     let mut all_images = None;
     loop {
         match get_next_image(&mut loader, ctx.screen_rect(), &mut all_images).await {
@@ -188,4 +194,122 @@ async fn send_update<T>(sender: &Sender<T>, ctx: &egui::Context, message: T) {
         process::exit(1);
     }
     ctx.request_repaint();
+}
+
+#[tokio::test]
+async fn load_multiple_iamges() {
+    let mut server = mockito::Server::new();
+    let url = server.url();
+
+    let config_content_mock = server
+        .mock("GET", "/root:/slideshow.txt:/content")
+        .match_header("authorization", "Bearer token")
+        .with_body(r#"{ "directories": [ "d1" ], "interval": 42 } "#)
+        .expect(1)
+        .create();
+
+    let folder_query = mockito::Matcher::AllOf(vec![
+        mockito::Matcher::UrlEncoded("$select".into(), "id".into()),
+        mockito::Matcher::UrlEncoded("$filter".into(), "folder ne null".into()),
+    ]);
+    let image_query = mockito::Matcher::AllOf(vec![
+        mockito::Matcher::UrlEncoded("$select".into(), "id".into()),
+        mockito::Matcher::UrlEncoded("$filter".into(), "image ne null".into()),
+    ]);
+
+    let d1_folder_mock = server
+        .mock("GET", "/root:/d1:/children")
+        .match_query(folder_query.clone())
+        .match_header("authorization", "Bearer token")
+        .with_body(r#"{ "value": [ ] }"#)
+        .expect(1)
+        .create();
+    let d1_image_mock = server
+        .mock("GET", "/root:/d1:/children")
+        .match_query(image_query.clone())
+        .match_header("authorization", "Bearer token")
+        .with_body(r#"{ "value": [ { "id": "the_image" } ] }"#)
+        .expect(1)
+        .create();
+
+    let thumbnail_mock = server
+        .mock("GET", "/items/the_image/thumbnails")
+        .match_query(mockito::Matcher::UrlEncoded(
+            "select".into(),
+            "c1024x768".into(),
+        ))
+        .match_header("authorization", "Bearer token")
+        .with_body(format!(
+            r#"{{ "value": [ {{ "c1024x768": {{ "url": "{url}/download" }} }} ] }} "#
+        ))
+        .expect(1)
+        .create();
+
+    let mut image_data = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new(&mut image_data)
+        .encode_image(&image::RgbImage::new(1, 1))
+        .unwrap();
+    let download_mock = server
+        .mock("GET", "/download")
+        .with_body(image_data)
+        .expect(1)
+        .create();
+
+    // First load should get the config and directory listing.
+    let mut image_loader = ImageLoader::new(crate::auth::test_authenticator(), &url);
+    let mut all_images = None;
+    let actual_image = get_next_image(
+        &mut image_loader,
+        Rect {
+            min: eframe::epaint::Pos2::ZERO,
+            max: eframe::epaint::Pos2 {
+                y: 1024.0,
+                x: 768.0,
+            },
+        },
+        &mut all_images,
+    )
+    .await
+    .unwrap();
+    assert_eq!(actual_image.height(), 1);
+    assert_eq!(actual_image.width(), 1);
+    assert_eq!(
+        all_images.as_ref().unwrap().images,
+        &["the_image".to_string()]
+    );
+    config_content_mock.assert();
+    d1_folder_mock.assert();
+    d1_image_mock.assert();
+    thumbnail_mock.assert();
+    download_mock.assert();
+
+    // Second load should re-use the listing.
+    config_content_mock.remove();
+    d1_folder_mock.remove();
+    d1_image_mock.remove();
+    thumbnail_mock.remove();
+    let thumbnail_mock = thumbnail_mock.create();
+    download_mock.remove();
+    let download_mock = download_mock.create();
+    let actual_image = get_next_image(
+        &mut image_loader,
+        Rect {
+            min: eframe::epaint::Pos2::ZERO,
+            max: eframe::epaint::Pos2 {
+                y: 1024.0,
+                x: 768.0,
+            },
+        },
+        &mut all_images,
+    )
+    .await
+    .unwrap();
+    assert_eq!(actual_image.height(), 1);
+    assert_eq!(actual_image.width(), 1);
+    assert_eq!(
+        all_images.as_ref().unwrap().images,
+        &["the_image".to_string()]
+    );
+    thumbnail_mock.assert();
+    download_mock.assert();
 }

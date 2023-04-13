@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use reqwest::StatusCode;
+use reqwest::{StatusCode, Url};
 use std::ops::Deref;
 
 use crate::auth::Authenticator;
@@ -15,14 +15,14 @@ impl Client {
         }
     }
 
-    pub async fn get<T>(&self, authenticator: &mut Authenticator, url: &str) -> Result<T>
+    pub async fn get<T>(&self, authenticator: &mut Authenticator, url: Url) -> Result<T>
     where
         T: serde::de::DeserializeOwned,
     {
         loop {
             let response = self
                 .inner
-                .get(url)
+                .get(url.clone())
                 .bearer_auth(authenticator.get_token().await?)
                 .send()
                 .await
@@ -46,7 +46,7 @@ impl Client {
 
     pub async fn post<T>(
         &self,
-        url: &str,
+        url: Url,
         parameters: &[(&str, &str)],
         expected_error: Option<StatusCode>,
     ) -> Result<T>
@@ -75,7 +75,7 @@ impl Client {
     pub async fn download(
         &self,
         authenticator: &mut Authenticator,
-        url: &str,
+        url: Url,
     ) -> Result<impl Deref<Target = [u8]>> {
         Ok(self
             .inner
@@ -86,5 +86,24 @@ impl Client {
             .with_context(|| "Sending request failed")?
             .bytes()
             .await?)
+    }
+}
+
+pub trait AppendPaths {
+    fn append_path(&self, path: &str) -> Self;
+    fn append_paths(&self, paths: &[&str]) -> Self;
+}
+
+impl AppendPaths for Url {
+    fn append_path(&self, path: &str) -> Self {
+        let mut new_url = self.clone();
+        new_url.path_segments_mut().unwrap().push(path);
+        new_url
+    }
+
+    fn append_paths(&self, paths: &[&str]) -> Self {
+        let mut new_url = self.clone();
+        new_url.path_segments_mut().unwrap().extend(paths);
+        new_url
     }
 }
