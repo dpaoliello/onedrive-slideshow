@@ -7,13 +7,14 @@ use egui_extras::RetainedImage;
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 pub struct ImageLoader {
     client: Client,
     authenticator: Authenticator,
     base_url: Url,
     config_url: Url,
+    cache_directory: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -45,13 +46,14 @@ struct Config {
 }
 
 impl ImageLoader {
-    pub fn new(authenticator: Authenticator, base_url: &str) -> Self {
+    pub fn new(authenticator: Authenticator, base_url: &str, cache_directory: PathBuf) -> Self {
         let base_url = Url::parse(base_url).unwrap();
         Self {
             client: Client::new(),
             authenticator,
             config_url: base_url.append_paths(&["root:", "slideshow.txt:", "content"]),
             base_url,
+            cache_directory,
         }
     }
 
@@ -131,36 +133,66 @@ impl ImageLoader {
         let index = rand::thread_rng().gen_range(0..all_images.len());
         let image_id = all_images.get(index).unwrap();
 
-        let mut thumbnail_url = self
-            .base_url
-            .append_paths(&["items", image_id, "thumbnails"]);
-        thumbnail_url.set_query(Some(&format!("select=c{height}x{width}")));
-        let thumbnail_response = self
-            .client
-            .get::<ThumbnailResponse>(&mut self.authenticator, thumbnail_url)
-            .await
-            .with_context(|| "Get thumbnail")?;
-        let (_, ThumbnailItem { url: download_url }) = thumbnail_response
-            .value
-            .into_iter()
-            .next()
-            .ok_or(anyhow!("Bad thumbnail response"))?
-            .into_iter()
-            .next()
-            .ok_or(anyhow!("No thumbnail returned"))?;
-
-        RetainedImage::from_image_bytes(
-            "downloaded_image",
-            &self
+        let cache_path = self.cache_directory.join(image_id);
+        let data = if cache_path.exists() {
+            tokio::fs::read(cache_path)
+                .await
+                .with_context(|| "Reading cached image failed")?
+                .into()
+        } else {
+            let mut thumbnail_url = self
+                .base_url
+                .append_paths(&["items", image_id, "thumbnails"]);
+            thumbnail_url.set_query(Some(&format!("select=c{height}x{width}")));
+            let thumbnail_response = self
+                .client
+                .get::<ThumbnailResponse>(&mut self.authenticator, thumbnail_url)
+                .await
+                .with_context(|| "Get thumbnail")?;
+            let (_, ThumbnailItem { url: download_url }) = thumbnail_response
+                .value
+                .into_iter()
+                .next()
+                .ok_or(anyhow!("Bad thumbnail response"))?
+                .into_iter()
+                .next()
+                .ok_or(anyhow!("No thumbnail returned"))?;
+            let data = self
                 .client
                 .download(
                     &mut self.authenticator,
                     Url::parse(&download_url).with_context(|| "Download URL invalid")?,
                 )
                 .await
-                .with_context(|| "Downloading image failed")?,
-        )
-        .map_err(|err| anyhow!(err).context("Image parsing failed"))
+                .with_context(|| "Downloading image failed")?;
+
+            if should_cache_image() {
+                if !self.cache_directory.exists() {
+                    tokio::fs::create_dir_all(&self.cache_directory)
+                        .await
+                        .with_context(|| "Create cache directory")?;
+                }
+                tokio::fs::write(&cache_path, &data)
+                    .await
+                    .with_context(|| "Store image in cache")?;
+            }
+
+            data
+        };
+
+        RetainedImage::from_image_bytes("downloaded_image", &data)
+            .map_err(|err| anyhow!(err).context("Image parsing failed"))
+    }
+}
+
+fn should_cache_image() -> bool {
+    cfg_if::cfg_if! {
+        if #[cfg(test)] {
+            true
+        } else {
+            let disk_info = sys_info::disk_info().unwrap();
+            disk_info.free >= disk_info.total / 10
+        }
     }
 }
 
@@ -269,7 +301,8 @@ async fn list_images() {
         .expect(1)
         .create();
 
-    let mut image_loader = ImageLoader::new(crate::auth::test_authenticator(), &url);
+    let temp_dir = std::env::temp_dir().join("onedrive_slideshow_test/list_images");
+    let mut image_loader = ImageLoader::new(crate::auth::test_authenticator(), &url, temp_dir);
     let (mut all_images, interval) = image_loader.get_image_list().await.unwrap();
     all_images.sort();
     assert_eq!(interval, 42);
@@ -291,6 +324,11 @@ async fn list_images() {
 
 #[tokio::test]
 async fn load_image() {
+    let temp_dir = std::env::temp_dir().join("onedrive_slideshow_test/load_image");
+    if temp_dir.exists() {
+        tokio::fs::remove_dir_all(&temp_dir).await.unwrap();
+    }
+
     let mut server = mockito::Server::new();
     let url = server.url();
 
@@ -317,13 +355,51 @@ async fn load_image() {
         .expect(1)
         .create();
 
-    let mut image_loader = ImageLoader::new(crate::auth::test_authenticator(), &url);
+    let mut image_loader = ImageLoader::new(crate::auth::test_authenticator(), &url, temp_dir);
     let actual_image = image_loader
         .load_next(1024, 768, &["1".into()])
         .await
         .unwrap();
     assert_eq!(actual_image.height(), 1);
     assert_eq!(actual_image.width(), 1);
+    thumbnail_mock.assert();
+    download_mock.assert();
+
+    // Loading again should use the cached image.
+    thumbnail_mock.remove();
+    download_mock.remove();
+    let actual_image = image_loader
+        .load_next(1024, 768, &["1".into()])
+        .await
+        .unwrap();
+    assert_eq!(actual_image.height(), 1);
+    assert_eq!(actual_image.width(), 1);
+
+    // But loading a different image will download again.
+    let thumbnail_mock = server
+        .mock("GET", "/items/2/thumbnails")
+        .match_query(mockito::Matcher::UrlEncoded(
+            "select".into(),
+            "c1024x768".into(),
+        ))
+        .match_header("authorization", "Bearer token")
+        .with_body(format!(
+            r#"{{ "value": [ {{ "c1024x768": {{ "url": "{url}/download" }} }} ] }} "#
+        ))
+        .expect(1)
+        .create();
+
+    let mut image_data = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new(&mut image_data)
+        .encode_image(&image::RgbImage::new(2, 2))
+        .unwrap();
+    let download_mock = download_mock.with_body(image_data).create();
+    let actual_image = image_loader
+        .load_next(1024, 768, &["2".into()])
+        .await
+        .unwrap();
+    assert_eq!(actual_image.height(), 2);
+    assert_eq!(actual_image.width(), 2);
     thumbnail_mock.assert();
     download_mock.assert();
 }
