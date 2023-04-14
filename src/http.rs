@@ -2,8 +2,6 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use reqwest::{StatusCode, Url};
 
-use crate::auth::Authenticator;
-
 pub struct Client {
     inner: reqwest::Client,
 }
@@ -15,33 +13,20 @@ impl Client {
         }
     }
 
-    pub async fn get<T>(&self, authenticator: &mut Authenticator, url: Url) -> Result<T>
+    pub async fn get<T>(&self, token: &str, url: Url) -> Result<T>
     where
         T: serde::de::DeserializeOwned,
     {
-        loop {
-            let response = self
-                .inner
-                .get(url.clone())
-                .bearer_auth(authenticator.get_token().await?)
-                .send()
-                .await
-                .with_context(|| "Sending request failed")?
-                .error_for_status();
-
-            match response {
-                Ok(response) => {
-                    return response
-                        .json::<T>()
-                        .await
-                        .with_context(|| "Parsing response failed")
-                }
-                Err(err) if err.status() == Some(StatusCode::UNAUTHORIZED) => {
-                    authenticator.invalidate_token()
-                }
-                Err(err) => return Err(err.into()),
-            }
-        }
+        self.inner
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .with_context(|| "Sending request failed")?
+            .error_for_status()?
+            .json::<T>()
+            .await
+            .with_context(|| "Parsing response failed")
     }
 
     pub async fn post<T>(
@@ -72,11 +57,11 @@ impl Client {
             .with_context(|| "Parsing response failed")
     }
 
-    pub async fn download(&self, authenticator: &mut Authenticator, url: Url) -> Result<Bytes> {
+    pub async fn download(&self, token: &str, url: Url) -> Result<Bytes> {
         Ok(self
             .inner
             .get(url)
-            .bearer_auth(authenticator.get_token().await?)
+            .bearer_auth(token)
             .send()
             .await
             .with_context(|| "Sending request failed")?

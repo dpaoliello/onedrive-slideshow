@@ -1,15 +1,18 @@
 use crate::http::{AppendPaths, Client};
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use reqwest::{StatusCode, Url};
 use serde::Deserialize;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
 
 const CLIENT_ID: &str = "9a021cf1-0d67-456b-b821-c1dff53de0e7";
 const SCOPE: &str = "offline_access files.read";
 
+const REFRESH_TOKEN_PADDING: Duration = Duration::from_secs(60);
+
 pub struct Authenticator {
     client: Client,
+    refresh_after: Instant,
     access_token: Option<String>,
     refresh_token: Option<String>,
     sender: Sender<AuthMessage>,
@@ -27,6 +30,7 @@ struct DeviceAuthResponse {
 
 #[derive(Deserialize)]
 struct TokenResponseSuccess {
+    expires_in: u64,
     access_token: String,
     refresh_token: String,
 }
@@ -55,6 +59,7 @@ impl Authenticator {
         let base_url = Url::parse(base_url).unwrap();
         Self {
             client: Client::new(),
+            refresh_after: Instant::now(),
             access_token: None,
             refresh_token: None,
             sender,
@@ -63,12 +68,8 @@ impl Authenticator {
         }
     }
 
-    pub fn invalidate_token(&mut self) {
-        self.access_token = None;
-    }
-
-    pub async fn get_token(&mut self) -> Result<&str> {
-        if self.access_token.is_none() {
+    pub async fn get_token(&mut self) -> Result<String> {
+        if self.access_token.is_none() || Instant::now() > self.refresh_after {
             let response = if let Some(refresh_token) = &self.refresh_token {
                 self.client
                     .post::<TokenResponse>(
@@ -141,13 +142,17 @@ impl Authenticator {
                     bail!(error_description);
                 }
                 TokenResponse::Success(response) => {
+                    self.refresh_after = Duration::from_secs(response.expires_in)
+                        .checked_sub(REFRESH_TOKEN_PADDING)
+                        .and_then(|expires_in| Instant::now().checked_add(expires_in))
+                        .ok_or_else(|| anyhow!("Token expires too quickly"))?;
                     self.refresh_token = Some(response.refresh_token);
                     self.access_token = Some(response.access_token);
                 }
             }
         }
 
-        Ok(self.access_token.as_ref().unwrap())
+        Ok(self.access_token.as_ref().unwrap().clone())
     }
 }
 
@@ -175,25 +180,14 @@ async fn auth_then_refresh() {
             ),
             mockito::Matcher::UrlEncoded("device_code".into(), "dc".into()),
         ]))
-        .with_body(r#"{ "access_token": "ac", "refresh_token": "rt" } "#)
-        .expect(1)
-        .create();
-
-    let refresh_token_mock = server
-        .mock("POST", "/token")
-        .match_body(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded("client_id".into(), CLIENT_ID.into()),
-            mockito::Matcher::UrlEncoded("grant_type".into(), "refresh_token".into()),
-            mockito::Matcher::UrlEncoded("scope".into(), SCOPE.into()),
-            mockito::Matcher::UrlEncoded("refresh_token".into(), "rt".into()),
-        ]))
-        .with_body(r#"{ "access_token": "ac2", "refresh_token": "rt2" } "#)
+        .with_body(r#"{ "access_token": "ac", "refresh_token": "rt", "expires_in": 60 } "#)
         .expect(1)
         .create();
 
     let (sender, mut reciever) = tokio::sync::mpsc::channel(8);
     let mut authenticator = Authenticator::new(sender, &url);
 
+    // Initial get token.
     let token = authenticator.get_token().await.unwrap();
     assert_eq!(token, "ac");
     assert_eq!(authenticator.refresh_token.as_ref().unwrap(), "rt");
@@ -205,9 +199,19 @@ async fn auth_then_refresh() {
 
     device_mock.assert();
     token_mock.assert();
-    assert!(!refresh_token_mock.matched());
 
-    authenticator.invalidate_token();
+    // Token has expired, so we'll have to refresh it.
+    let refresh_token_mock = server
+        .mock("POST", "/token")
+        .match_body(mockito::Matcher::AllOf(vec![
+            mockito::Matcher::UrlEncoded("client_id".into(), CLIENT_ID.into()),
+            mockito::Matcher::UrlEncoded("grant_type".into(), "refresh_token".into()),
+            mockito::Matcher::UrlEncoded("scope".into(), SCOPE.into()),
+            mockito::Matcher::UrlEncoded("refresh_token".into(), "rt".into()),
+        ]))
+        .with_body(r#"{ "access_token": "ac2", "refresh_token": "rt2", "expires_in": 3600 } "#)
+        .expect(1)
+        .create();
     let token = authenticator.get_token().await.unwrap();
     assert_eq!(token, "ac2");
     assert_eq!(authenticator.refresh_token.as_ref().unwrap(), "rt2");
@@ -215,23 +219,11 @@ async fn auth_then_refresh() {
     token_mock.assert();
     refresh_token_mock.assert();
 
+    // Token lives for 1hr, so should still be ok.
     let token = authenticator.get_token().await.unwrap();
     assert_eq!(token, "ac2");
     assert_eq!(authenticator.refresh_token.as_ref().unwrap(), "rt2");
     device_mock.assert();
     token_mock.assert();
     refresh_token_mock.assert();
-}
-
-#[cfg(test)]
-pub fn test_authenticator() -> Authenticator {
-    let (sender, _) = tokio::sync::mpsc::channel(8);
-    Authenticator {
-        client: Client::new(),
-        access_token: Some("token".into()),
-        refresh_token: Some("refresh".into()),
-        sender,
-        device_code_url: Url::parse("http://localhost/devicecode").unwrap(),
-        token_url: Url::parse("http://localhost/token").unwrap(),
-    }
 }
