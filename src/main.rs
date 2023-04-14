@@ -18,7 +18,7 @@ use tokio::{
 
 use crate::auth::AuthMessage;
 
-const DEFAULT_IMAGE_REFRESH_TIME: Duration = Duration::from_secs(1);
+const ON_ERROR_REFRESH_TIME: Duration = Duration::from_secs(1);
 const IMAGE_LIST_REFRESH_TIME: Duration = Duration::from_secs(60 * 60);
 
 fn main() -> Result<(), eframe::Error> {
@@ -103,7 +103,7 @@ impl eframe::App for Slideshow {
 struct ImageList {
     images: Vec<String>,
     interval: Duration,
-    last_updated: Instant,
+    refresh_after: Instant,
 }
 
 async fn image_load_loop(ui_sender: Sender<Result<AppState>>, ctx: egui::Context) {
@@ -133,61 +133,102 @@ async fn image_load_loop(ui_sender: Sender<Result<AppState>>, ctx: egui::Context
         }
     });
 
-    let mut loader = ImageLoader::new(
-        Authenticator::new(
-            auth_sender,
-            "https://login.microsoftonline.com/consumers/oauth2/v2.0",
-        ),
+    let mut authenticator = Authenticator::new(
+        auth_sender,
+        "https://login.microsoftonline.com/consumers/oauth2/v2.0",
+    );
+    let loader = ImageLoader::new(
         "https://graph.microsoft.com/v1.0/me/drive",
         std::env::temp_dir().join("onedrive_slideshow"),
     );
-    let mut all_images = None;
+    let mut next_image = get_next_image(
+        &loader,
+        get_auth_token(&mut authenticator, &ui_sender, &ctx).await,
+        ctx.screen_rect(),
+        None,
+    );
+    let mut interval = Duration::ZERO;
     loop {
-        match get_next_image(&mut loader, ctx.screen_rect(), &mut all_images).await {
-            Ok(image) => send_update(&ui_sender, &ctx, Ok(AppState::HasImage(image))).await,
-            Err(err) => {
+        tokio::time::sleep(interval).await;
+
+        let all_images = match next_image.await {
+            Ok((image, all_images)) => {
+                interval = all_images.interval;
+                send_update(&ui_sender, &ctx, Ok(AppState::HasImage(image))).await;
+                Some(all_images)
+            }
+            Err((err, all_images)) => {
+                interval = ON_ERROR_REFRESH_TIME;
                 send_update(&ui_sender, &ctx, Err(err.context("Loading image"))).await;
+                all_images
+            }
+        };
+
+        next_image = get_next_image(
+            &loader,
+            get_auth_token(&mut authenticator, &ui_sender, &ctx).await,
+            ctx.screen_rect(),
+            all_images,
+        );
+    }
+}
+
+async fn get_auth_token(
+    authenticator: &mut Authenticator,
+    ui_sender: &Sender<Result<AppState>>,
+    ctx: &egui::Context,
+) -> String {
+    loop {
+        match authenticator.get_token().await {
+            Ok(token) => return token,
+            Err(err) => {
+                send_update(ui_sender, ctx, Err(err.context("Authenticating"))).await;
             }
         }
-
-        tokio::time::sleep(
-            all_images
-                .as_ref()
-                .map_or(DEFAULT_IMAGE_REFRESH_TIME, |all_images| all_images.interval),
-        )
-        .await;
     }
 }
 
 async fn get_next_image(
-    loader: &mut ImageLoader,
+    loader: &ImageLoader,
+    token: String,
     size: Rect,
-    all_images: &mut Option<ImageList>,
-) -> Result<RetainedImage> {
+    mut all_images: Option<ImageList>,
+) -> Result<(RetainedImage, ImageList), (anyhow::Error, Option<ImageList>)> {
     // Check for expiry.
-    if all_images.as_ref().map_or(false, |list| {
-        Instant::now().duration_since(list.last_updated) >= IMAGE_LIST_REFRESH_TIME
-    }) {
-        *all_images = None;
+    if all_images
+        .as_ref()
+        .map_or(false, |list| Instant::now() >= list.refresh_after)
+    {
+        all_images = None;
     }
 
     // Get the new list of images if we don't have one.
-    if all_images.is_none() {
-        let (images, interval) = loader.get_image_list().await?;
-        *all_images = Some(ImageList {
+    let all_images = if let Some(all_images) = all_images {
+        all_images
+    } else {
+        let (images, interval) = loader
+            .get_image_list(&token)
+            .await
+            .map_err(|err| (err, None))?;
+        ImageList {
             images,
             interval: Duration::from_secs(interval),
-            last_updated: Instant::now(),
-        });
-    }
+            refresh_after: Instant::now().checked_add(IMAGE_LIST_REFRESH_TIME).unwrap(),
+        }
+    };
 
-    loader
+    match loader
         .load_next(
+            &token,
             size.height() as u32,
             size.width() as u32,
-            &all_images.as_ref().unwrap().images,
+            &all_images.images,
         )
         .await
+    {
+        Ok(image) => Ok((image, all_images)),
+        Err(err) => Err((err, Some(all_images))),
+    }
 }
 
 async fn send_update<T>(sender: &Sender<T>, ctx: &egui::Context, message: T) {
@@ -262,10 +303,10 @@ async fn load_multiple_images() {
         .create();
 
     // First load should get the config and directory listing.
-    let mut image_loader = ImageLoader::new(crate::auth::test_authenticator(), &url, temp_dir);
-    let mut all_images = None;
-    let actual_image = get_next_image(
-        &mut image_loader,
+    let image_loader = ImageLoader::new(&url, temp_dir);
+    let (actual_image, all_images) = get_next_image(
+        &image_loader,
+        "token".into(),
         Rect {
             min: eframe::epaint::Pos2::ZERO,
             max: eframe::epaint::Pos2 {
@@ -273,16 +314,14 @@ async fn load_multiple_images() {
                 x: 768.0,
             },
         },
-        &mut all_images,
+        None,
     )
     .await
+    .ok()
     .unwrap();
     assert_eq!(actual_image.height(), 1);
     assert_eq!(actual_image.width(), 1);
-    assert_eq!(
-        all_images.as_ref().unwrap().images,
-        &["the_image".to_string()]
-    );
+    assert_eq!(all_images.images, &["the_image".to_string()]);
     config_content_mock.assert();
     d1_folder_mock.assert();
     d1_image_mock.assert();
@@ -295,8 +334,9 @@ async fn load_multiple_images() {
     d1_image_mock.remove();
     thumbnail_mock.remove();
     download_mock.remove();
-    let actual_image = get_next_image(
-        &mut image_loader,
+    let (actual_image, mut all_images) = get_next_image(
+        &image_loader,
+        "token".into(),
         Rect {
             min: eframe::epaint::Pos2::ZERO,
             max: eframe::epaint::Pos2 {
@@ -304,14 +344,39 @@ async fn load_multiple_images() {
                 x: 768.0,
             },
         },
-        &mut all_images,
+        Some(all_images),
     )
     .await
+    .ok()
     .unwrap();
     assert_eq!(actual_image.height(), 1);
     assert_eq!(actual_image.width(), 1);
-    assert_eq!(
-        all_images.as_ref().unwrap().images,
-        &["the_image".to_string()]
-    );
+    assert_eq!(all_images.images, &["the_image".to_string()]);
+
+    // Make the image list expire: this will cause it to reload, but the image should come from cache.
+    let config_content_mock = config_content_mock.create();
+    let d1_folder_mock = d1_folder_mock.create();
+    let d1_image_mock = d1_image_mock.create();
+    all_images.refresh_after = Instant::now();
+    let (actual_image, all_images) = get_next_image(
+        &image_loader,
+        "token".into(),
+        Rect {
+            min: eframe::epaint::Pos2::ZERO,
+            max: eframe::epaint::Pos2 {
+                y: 1024.0,
+                x: 768.0,
+            },
+        },
+        Some(all_images),
+    )
+    .await
+    .ok()
+    .unwrap();
+    assert_eq!(actual_image.height(), 1);
+    assert_eq!(actual_image.width(), 1);
+    assert_eq!(all_images.images, &["the_image".to_string()]);
+    config_content_mock.assert();
+    d1_folder_mock.assert();
+    d1_image_mock.assert();
 }

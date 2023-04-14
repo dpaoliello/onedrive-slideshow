@@ -1,17 +1,14 @@
-use crate::{
-    auth::Authenticator,
-    http::{AppendPaths, Client},
-};
+use crate::http::{AppendPaths, Client};
 use anyhow::{anyhow, Context, Result};
 use egui_extras::RetainedImage;
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
 use std::{collections::HashMap, path::PathBuf};
+use tokio::sync::mpsc::unbounded_channel;
 
 pub struct ImageLoader {
     client: Client,
-    authenticator: Authenticator,
     base_url: Url,
     config_url: Url,
     cache_directory: PathBuf,
@@ -46,21 +43,20 @@ struct Config {
 }
 
 impl ImageLoader {
-    pub fn new(authenticator: Authenticator, base_url: &str, cache_directory: PathBuf) -> Self {
+    pub fn new(base_url: &str, cache_directory: PathBuf) -> Self {
         let base_url = Url::parse(base_url).unwrap();
         Self {
             client: Client::new(),
-            authenticator,
             config_url: base_url.append_paths(&["root:", "slideshow.txt:", "content"]),
             base_url,
             cache_directory,
         }
     }
 
-    async fn get_all_ids(&mut self, first_url: Url) -> Result<Vec<DriveItem>> {
+    async fn get_all_ids(&self, token: &str, first_url: Url) -> Result<Vec<DriveItem>> {
         let response = self
             .client
-            .get::<DriveResponse>(&mut self.authenticator, first_url)
+            .get::<DriveResponse>(token, first_url)
             .await
             .with_context(|| "Get all items")?;
         let mut items = response.value;
@@ -69,7 +65,7 @@ impl ImageLoader {
             let response = self
                 .client
                 .get::<DriveResponse>(
-                    &mut self.authenticator,
+                    token,
                     Url::parse(&url).with_context(|| "Next link invalid")?,
                 )
                 .await
@@ -80,20 +76,17 @@ impl ImageLoader {
         Ok(items)
     }
 
-    pub async fn get_image_list(&mut self) -> Result<(Vec<String>, u64)> {
+    pub async fn get_image_list(&self, token: &str) -> Result<(Vec<String>, u64)> {
         let config = self
             .client
-            .get::<Config>(&mut self.authenticator, self.config_url.clone())
+            .get::<Config>(token, self.config_url.clone())
             .await
             .with_context(|| "Get slideshow.txt")?;
 
-        let mut all_images = Vec::new();
-        let mut directory_work_list = config
-            .directories
-            .iter()
-            .map(|d| format!("root:/{d}:"))
-            .collect::<Vec<_>>();
-        while let Some(directory) = directory_work_list.pop() {
+        let (image_sender, mut image_receiver) = unbounded_channel();
+        let (directory_sender, mut directory_receiver) = unbounded_channel();
+
+        let process_directory = |directory: String| {
             let mut paths = directory.split('/').collect::<Vec<_>>();
             paths.push("children");
             let get_children_url = self.base_url.append_paths(&paths);
@@ -101,31 +94,50 @@ impl ImageLoader {
             // Gather sub-directories to process.
             let mut list_directories_url = get_children_url.clone();
             list_directories_url.set_query(Some("$select=id&$filter=folder ne null&$top=999999"));
-            directory_work_list.extend(
-                self.get_all_ids(list_directories_url)
-                    .await
-                    .with_context(|| "Get sub-directories")?
-                    .into_iter()
-                    .map(|DriveItem { id }| format!("items/{id}")),
-            );
+            directory_sender
+                .send(self.get_all_ids(token, list_directories_url))
+                .ok()
+                .unwrap();
 
             // Gather images.
             let mut list_images_url = get_children_url;
             list_images_url.set_query(Some("$select=id&$filter=image ne null&$top=999999"));
+            image_sender
+                .send(self.get_all_ids(token, list_images_url))
+                .ok()
+                .unwrap();
+        };
+
+        // Seed with initial directories.
+        for directory in config.directories {
+            process_directory(format!("root:/{directory}:"));
+        }
+
+        // Depth-first processing of directories...
+        while let Ok(directories) = directory_receiver.try_recv() {
+            for directory_item in directories.await.with_context(|| "Get sub-directories")? {
+                let id = directory_item.id;
+                process_directory(format!("items/{id}"));
+            }
+        }
+
+        let mut all_images = Vec::new();
+        while let Ok(images) = image_receiver.try_recv() {
             all_images.extend(
-                self.get_all_ids(list_images_url)
+                images
                     .await
                     .with_context(|| "Get images")?
                     .into_iter()
                     .map(|DriveItem { id }| id),
-            );
+            )
         }
 
         Ok((all_images, config.interval))
     }
 
     pub async fn load_next(
-        &mut self,
+        &self,
+        token: &str,
         height: u32,
         width: u32,
         all_images: &[String],
@@ -146,7 +158,7 @@ impl ImageLoader {
             thumbnail_url.set_query(Some(&format!("select=c{height}x{width}")));
             let thumbnail_response = self
                 .client
-                .get::<ThumbnailResponse>(&mut self.authenticator, thumbnail_url)
+                .get::<ThumbnailResponse>(token, thumbnail_url)
                 .await
                 .with_context(|| "Get thumbnail")?;
             let (_, ThumbnailItem { url: download_url }) = thumbnail_response
@@ -160,7 +172,7 @@ impl ImageLoader {
             let data = self
                 .client
                 .download(
-                    &mut self.authenticator,
+                    token,
                     Url::parse(&download_url).with_context(|| "Download URL invalid")?,
                 )
                 .await
@@ -302,8 +314,8 @@ async fn list_images() {
         .create();
 
     let temp_dir = std::env::temp_dir().join("onedrive_slideshow_test/list_images");
-    let mut image_loader = ImageLoader::new(crate::auth::test_authenticator(), &url, temp_dir);
-    let (mut all_images, interval) = image_loader.get_image_list().await.unwrap();
+    let image_loader = ImageLoader::new(&url, temp_dir);
+    let (mut all_images, interval) = image_loader.get_image_list("token").await.unwrap();
     all_images.sort();
     assert_eq!(interval, 42);
     assert_eq!(&all_images, &["d1_1_1", "d1_2_1", "d1_3", "d1_4", "d2_1"]);
@@ -355,9 +367,9 @@ async fn load_image() {
         .expect(1)
         .create();
 
-    let mut image_loader = ImageLoader::new(crate::auth::test_authenticator(), &url, temp_dir);
+    let image_loader = ImageLoader::new(&url, temp_dir);
     let actual_image = image_loader
-        .load_next(1024, 768, &["1".into()])
+        .load_next("token", 1024, 768, &["1".into()])
         .await
         .unwrap();
     assert_eq!(actual_image.height(), 1);
@@ -369,7 +381,7 @@ async fn load_image() {
     thumbnail_mock.remove();
     download_mock.remove();
     let actual_image = image_loader
-        .load_next(1024, 768, &["1".into()])
+        .load_next("token", 1024, 768, &["1".into()])
         .await
         .unwrap();
     assert_eq!(actual_image.height(), 1);
@@ -395,7 +407,7 @@ async fn load_image() {
         .unwrap();
     let download_mock = download_mock.with_body(image_data).create();
     let actual_image = image_loader
-        .load_next(1024, 768, &["2".into()])
+        .load_next("token", 1024, 768, &["2".into()])
         .await
         .unwrap();
     assert_eq!(actual_image.height(), 2);
