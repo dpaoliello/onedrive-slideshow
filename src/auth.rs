@@ -25,7 +25,8 @@ struct DeviceAuthResponse {
     device_code: String,
     user_code: String,
     verification_uri: String,
-    interval: i32,
+    expires_in: u64,
+    interval: u64,
 }
 
 #[derive(Deserialize)]
@@ -85,53 +86,63 @@ impl Authenticator {
                     .await
                     .with_context(|| "Refresh token")?
             } else {
-                let device_response = self
-                    .client
-                    .post::<DeviceAuthResponse>(
-                        self.device_code_url.clone(),
-                        &[("client_id", CLIENT_ID), ("scope", SCOPE)],
-                        None,
-                    )
-                    .await
-                    .with_context(|| "Initial auth request")?;
-
-                self.sender
-                    .send(AuthMessage::HasClientCode(
-                        device_response.verification_uri,
-                        device_response.user_code,
-                    ))
-                    .await
-                    .unwrap();
-
-                loop {
-                    let token_response = self
+                'outer: loop {
+                    let device_response = self
                         .client
-                        .post::<TokenResponse>(
-                            self.token_url.clone(),
-                            &[
-                                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                                ("client_id", CLIENT_ID),
-                                ("device_code", &device_response.device_code),
-                            ],
-                            Some(StatusCode::BAD_REQUEST),
+                        .post::<DeviceAuthResponse>(
+                            self.device_code_url.clone(),
+                            &[("client_id", CLIENT_ID), ("scope", SCOPE)],
+                            None,
                         )
                         .await
-                        .with_context(|| "Exchange token")?;
+                        .with_context(|| "Initial auth request")?;
+                    let device_response_expiry = Instant::now()
+                        .checked_add(Duration::from_secs(device_response.expires_in))
+                        .unwrap();
 
-                    if let TokenResponse::Failure(TokenResponseError { error, .. }) =
-                        &token_response
-                    {
-                        if error == "authorization_pending" {
-                            tokio::time::sleep(Duration::from_secs(
-                                device_response.interval as u64,
-                            ))
-                            .await;
-                            continue;
+                    self.sender
+                        .send(AuthMessage::HasClientCode(
+                            device_response.verification_uri,
+                            device_response.user_code,
+                        ))
+                        .await
+                        .unwrap();
+
+                    loop {
+                        let token_response = self
+                            .client
+                            .post::<TokenResponse>(
+                                self.token_url.clone(),
+                                &[
+                                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                                    ("client_id", CLIENT_ID),
+                                    ("device_code", &device_response.device_code),
+                                ],
+                                Some(StatusCode::BAD_REQUEST),
+                            )
+                            .await
+                            .with_context(|| "Exchange token")?;
+
+                        if let TokenResponse::Failure(TokenResponseError { error, .. }) =
+                            &token_response
+                        {
+                            if error == "authorization_pending" {
+                                tokio::time::sleep(Duration::from_secs(device_response.interval))
+                                    .await;
+
+                                if device_response_expiry <= Instant::now() {
+                                    // Code has expired, get a new one.
+                                    continue 'outer;
+                                } else {
+                                    // Check if the user has approved the code.
+                                    continue;
+                                }
+                            }
                         }
-                    }
 
-                    self.sender.send(AuthMessage::Completed).await.unwrap();
-                    break token_response;
+                        self.sender.send(AuthMessage::Completed).await.unwrap();
+                        break 'outer token_response;
+                    }
                 }
             };
 
@@ -166,7 +177,7 @@ async fn auth_then_refresh() {
             mockito::Matcher::UrlEncoded("client_id".into(), CLIENT_ID.into()),
             mockito::Matcher::UrlEncoded("scope".into(), SCOPE.into())
         ]))
-        .with_body(r#"{ "device_code": "dc", "user_code": "uc", "verification_uri": "vu", "interval": 0 } "#)
+        .with_body(r#"{ "device_code": "dc", "user_code": "uc", "verification_uri": "vu", "interval": 0, "expires_in": 3600 } "#)
         .expect(1)
         .create();
 
@@ -226,4 +237,73 @@ async fn auth_then_refresh() {
     device_mock.assert();
     token_mock.assert();
     refresh_token_mock.assert();
+}
+
+#[tokio::test]
+async fn device_code_expired() {
+    let mut server = mockito::Server::new();
+    let url = server.url();
+
+    let first_call = std::sync::atomic::AtomicBool::new(true);
+    let device_mock = server.mock("POST", "/devicecode")
+        .match_body(mockito::Matcher::AllOf(vec![
+            mockito::Matcher::UrlEncoded("client_id".into(), CLIENT_ID.into()),
+            mockito::Matcher::UrlEncoded("scope".into(), SCOPE.into())
+        ]))
+        .with_body_from_request(move |_| {
+            if first_call.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                r#"{ "device_code": "dc1", "user_code": "uc1", "verification_uri": "vu1", "interval": 0, "expires_in": 0 } "#.into()
+            } else {
+                r#"{ "device_code": "dc2", "user_code": "uc2", "verification_uri": "vu2", "interval": 0, "expires_in": 3600 } "#.into()
+            }
+        })
+        .expect(2)
+        .create();
+
+    let failed_token_mock = server
+        .mock("POST", "/token")
+        .match_body(mockito::Matcher::AllOf(vec![
+            mockito::Matcher::UrlEncoded("client_id".into(), CLIENT_ID.into()),
+            mockito::Matcher::UrlEncoded(
+                "grant_type".into(),
+                "urn:ietf:params:oauth:grant-type:device_code".into(),
+            ),
+            mockito::Matcher::UrlEncoded("device_code".into(), "dc1".into()),
+        ]))
+        .with_body(r#"{ "error": "authorization_pending", "error_description": ""}"#)
+        .with_status(400)
+        .expect(1)
+        .create();
+
+    let success_token_mock = server
+        .mock("POST", "/token")
+        .match_body(mockito::Matcher::AllOf(vec![
+            mockito::Matcher::UrlEncoded("client_id".into(), CLIENT_ID.into()),
+            mockito::Matcher::UrlEncoded(
+                "grant_type".into(),
+                "urn:ietf:params:oauth:grant-type:device_code".into(),
+            ),
+            mockito::Matcher::UrlEncoded("device_code".into(), "dc2".into()),
+        ]))
+        .with_body(r#"{ "access_token": "ac", "refresh_token": "rt", "expires_in": 3600 } "#)
+        .expect(1)
+        .create();
+
+    let (sender, mut reciever) = tokio::sync::mpsc::channel(8);
+    let mut authenticator = Authenticator::new(sender, &url);
+    let token = authenticator.get_token().await.unwrap();
+    assert_eq!(token, "ac");
+    assert_eq!(authenticator.refresh_token.as_ref().unwrap(), "rt");
+    assert_eq!(
+        reciever.recv().await.unwrap(),
+        AuthMessage::HasClientCode("vu1".to_string(), "uc1".to_string())
+    );
+    assert_eq!(
+        reciever.recv().await.unwrap(),
+        AuthMessage::HasClientCode("vu2".to_string(), "uc2".to_string())
+    );
+
+    device_mock.assert();
+    failed_token_mock.assert();
+    success_token_mock.assert();
 }
