@@ -6,7 +6,10 @@ mod image_loader;
 
 use anyhow::Result;
 use auth::Authenticator;
-use eframe::{egui, epaint::Rect};
+use eframe::{
+    egui::{self, RichText},
+    epaint::{Color32, Rect},
+};
 use egui_extras::RetainedImage;
 use image_loader::ImageLoader;
 use std::{process, time::Duration};
@@ -91,7 +94,7 @@ impl eframe::App for Slideshow {
                         image.show_size(ui, image_size / x_ratio.max(y_ratio));
                     }
                     Ok(AppState::WaitingForAuth(auth_url, code)) => {
-                        ui.label(format!("Authorize the slideshow to read from your OneDrive by opening {auth_url} in a browser and entering the code {code}"));
+                        ui.label(RichText::new(format!("Authorize the slideshow to read from your OneDrive by opening {auth_url} in a browser and entering the code {code}")).size(20.0).color(Color32::WHITE));
                     }
                     Err(err) => {
                         ui.colored_label(ui.visuals().error_fg_color, format!("{err:?}")); // something went wrong
