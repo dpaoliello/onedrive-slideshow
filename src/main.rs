@@ -7,7 +7,7 @@ mod image_loader;
 use anyhow::Result;
 use auth::Authenticator;
 use eframe::{
-    egui::{self, RichText},
+    egui::{self, RichText, Sense},
     epaint::{Color32, Rect},
 };
 use egui_extras::RetainedImage;
@@ -39,8 +39,8 @@ fn main() -> Result<(), eframe::Error> {
                 options,
                 Box::new(move |cc| {
                     let (sender, receiver) = channel(8);
-                    task::spawn(image_load_loop(sender, cc.egui_ctx.clone()));
-                    Box::new(Slideshow::new(receiver))
+                    task::spawn(image_load_loop(sender.clone(), cc.egui_ctx.clone()));
+                    Box::new(Slideshow::new(receiver, sender))
                 }),
             )
         })
@@ -58,13 +58,20 @@ unsafe impl Sync for AppState {}
 struct Slideshow {
     current_state: Result<AppState>,
     incoming_state: Receiver<Result<AppState>>,
+    state_sender: Sender<Result<AppState>>,
+    previous_image: Option<RetainedImage>,
 }
 
 impl Slideshow {
-    fn new(image_receiver: Receiver<Result<AppState>>) -> Self {
+    fn new(
+        image_receiver: Receiver<Result<AppState>>,
+        state_sender: Sender<Result<AppState>>,
+    ) -> Self {
         Self {
             current_state: Ok(AppState::LoadingImage),
             incoming_state: image_receiver,
+            state_sender,
+            previous_image: None,
         }
     }
 }
@@ -73,12 +80,20 @@ impl eframe::App for Slideshow {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // If it's been long enough between updates, then start getting another image and switch images.
         match self.incoming_state.try_recv() {
-            Ok(new_state) => self.current_state = new_state,
+            Ok(new_state) => {
+                let mut old_state = new_state;
+                core::mem::swap(&mut self.current_state, &mut old_state);
+                self.previous_image = if let Ok(AppState::HasImage(image)) = old_state {
+                    Some(image)
+                } else {
+                    None
+                };
+            }
             Err(TryRecvError::Disconnected) => process::exit(1),
             _ => (),
         }
 
-        egui::CentralPanel::default().show(ctx, |ui|
+        let response = egui::CentralPanel::default().show(ctx, |ui|
             ui.centered_and_justified(|ui|
                  match &self.current_state {
                     Ok(AppState::LoadingImage) => {
@@ -99,7 +114,17 @@ impl eframe::App for Slideshow {
                     Err(err) => {
                         ui.colored_label(ui.visuals().error_fg_color, format!("{err:?}")); // something went wrong
                     }
-                }));
+                })).response;
+
+        if response.interact(Sense::click()).clicked() {
+            if let Some(image) = self.previous_image.take() {
+                let sender = self.state_sender.clone();
+                let ctx = ctx.clone();
+                tokio::spawn(async move {
+                    send_update(&sender, &ctx, Ok(AppState::HasImage(image))).await
+                });
+            }
+        }
     }
 }
 
