@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 mod auth;
+mod cred_store;
 mod http;
 mod image_loader;
 
@@ -164,6 +165,7 @@ async fn image_load_loop(ui_sender: Sender<Result<AppState>>, ctx: egui::Context
     let mut authenticator = Authenticator::new(
         auth_sender,
         "https://login.microsoftonline.com/consumers/oauth2/v2.0",
+        cred_store::get_refresh_token(),
     );
     let loader = ImageLoader::new(
         "https://graph.microsoft.com/v1.0/me/drive",
