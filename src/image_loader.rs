@@ -1,6 +1,6 @@
 use crate::http::{AppendPaths, Client};
 use anyhow::{anyhow, Context, Result};
-use egui_extras::RetainedImage;
+use egui::ColorImage;
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
@@ -141,7 +141,7 @@ impl ImageLoader {
         height: u32,
         width: u32,
         all_images: &[String],
-    ) -> Result<RetainedImage> {
+    ) -> Result<ColorImage> {
         let index = rand::thread_rng().gen_range(0..all_images.len());
         let image_id = all_images.get(index).unwrap();
 
@@ -192,8 +192,15 @@ impl ImageLoader {
             data
         };
 
-        RetainedImage::from_image_bytes("downloaded_image", &data)
-            .map_err(|err| anyhow!(err).context("Image parsing failed"))
+        let image = image::load_from_memory(&data)
+            .map_err(|err| anyhow!(err).context("Image parsing failed"))?;
+        let size = [image.width() as _, image.height() as _];
+        let image_buffer = image.to_rgba8();
+        let pixels = image_buffer.as_flat_samples();
+        Ok(egui::ColorImage::from_rgba_unmultiplied(
+            size,
+            pixels.as_slice(),
+        ))
     }
 }
 
