@@ -7,11 +7,8 @@ mod image_loader;
 
 use anyhow::Result;
 use auth::Authenticator;
-use eframe::{
-    egui::{self, RichText, Sense},
-    epaint::{Color32, Rect},
-};
-use egui_extras::RetainedImage;
+use eframe::epaint::{Color32, Rect};
+use egui::{self, ColorImage, RichText, Sense, ViewportBuilder};
 use image_loader::ImageLoader;
 use std::{process, time::Duration};
 use tokio::{
@@ -32,13 +29,14 @@ fn main() -> Result<(), eframe::Error> {
         .unwrap()
         .block_on(async {
             let options = eframe::NativeOptions {
-                fullscreen: true,
+                viewport: ViewportBuilder::default().with_fullscreen(true),
                 ..Default::default()
             };
             eframe::run_native(
                 "OneDrive Slideshow",
                 options,
                 Box::new(move |cc| {
+                    egui_extras::install_image_loaders(&cc.egui_ctx);
                     let (sender, receiver) = channel(8);
                     task::spawn(image_load_loop(sender.clone(), cc.egui_ctx.clone()));
                     Box::new(Slideshow::new(receiver, sender))
@@ -50,7 +48,7 @@ fn main() -> Result<(), eframe::Error> {
 enum AppState {
     WaitingForAuth(String, String),
     LoadingImage,
-    HasImage(RetainedImage),
+    HasImage(ColorImage),
 }
 
 unsafe impl Send for AppState {}
@@ -60,7 +58,7 @@ struct Slideshow {
     current_state: Result<AppState>,
     incoming_state: Receiver<Result<AppState>>,
     state_sender: Sender<Result<AppState>>,
-    previous_image: Option<RetainedImage>,
+    previous_image: Option<ColorImage>,
 }
 
 impl Slideshow {
@@ -101,13 +99,9 @@ impl eframe::App for Slideshow {
                         ui.spinner();
                     }
                     Ok(AppState::HasImage(image)) => {
-                        let image_size = image.size_vec2();
-                        let screen_size = ui.available_size();
-                        let x_ratio = image_size.x / screen_size.x;
-                        let y_ratio = image_size.y / screen_size.y;
-
                         ctx.set_cursor_icon(egui::CursorIcon::None);
-                        image.show_size(ui, image_size / x_ratio.max(y_ratio));
+                        let texture = ctx.load_texture("downloaded_image", image.clone(), Default::default());
+                        ui.add(egui::Image::new(&texture).shrink_to_fit());
                     }
                     Ok(AppState::WaitingForAuth(auth_url, code)) => {
                         ui.label(RichText::new(format!("Authorize the slideshow to read from your OneDrive by opening {auth_url} in a browser and entering the code {code}")).size(20.0).color(Color32::WHITE));
@@ -223,7 +217,7 @@ async fn get_next_image(
     token: String,
     size: Rect,
     mut all_images: Option<ImageList>,
-) -> Result<(RetainedImage, ImageList), (anyhow::Error, Option<ImageList>)> {
+) -> Result<(ColorImage, ImageList), (anyhow::Error, Option<ImageList>)> {
     // Check for expiry.
     if all_images
         .as_ref()
