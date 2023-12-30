@@ -27,7 +27,8 @@ impl Client {
                     return true;
                 }
 
-                if let Some(err) = err.source() {
+                let mut source = err.source();
+                while let Some(err) = source {
                     if let Some(err) = err.downcast_ref::<std::io::Error>() {
                         match err.raw_os_error() {
                             // Retry on DNS lookup failure.
@@ -35,8 +36,10 @@ impl Client {
                             Some(windows_sys::Win32::Networking::WinSock::WSAHOST_NOT_FOUND) => {
                                 return true
                             }
-                            _ => {}
+                            _ => break,
                         }
+                    } else {
+                        source = err.source();
                     }
                 }
 
