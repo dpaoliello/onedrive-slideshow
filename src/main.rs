@@ -92,7 +92,8 @@ impl eframe::App for Slideshow {
             _ => (),
         }
 
-        let response = egui::CentralPanel::default().show(ctx, |ui|
+        let frame = egui::Frame::default().fill(Color32::BLACK);
+        let response = egui::CentralPanel::default().frame(frame).show(ctx, |ui|
             ui.centered_and_justified(|ui|
                  match &self.current_state {
                     Ok(AppState::LoadingImage) => {
