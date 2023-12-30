@@ -8,7 +8,7 @@ mod image_loader;
 use anyhow::Result;
 use auth::Authenticator;
 use eframe::epaint::{Color32, Rect};
-use egui::{self, ColorImage, RichText, Sense, ViewportBuilder};
+use egui::{self, ColorImage, RichText, Sense, Style, ViewportBuilder, Visuals};
 use image_loader::ImageLoader;
 use std::{process, time::Duration};
 use tokio::{
@@ -36,6 +36,11 @@ fn main() -> Result<(), eframe::Error> {
                 "OneDrive Slideshow",
                 options,
                 Box::new(move |cc| {
+                    let style = Style {
+                        visuals: Visuals::dark(),
+                        ..Style::default()
+                    };
+                    cc.egui_ctx.set_style(style);
                     egui_extras::install_image_loaders(&cc.egui_ctx);
                     let (sender, receiver) = channel(8);
                     task::spawn(image_load_loop(sender.clone(), cc.egui_ctx.clone()));
@@ -92,8 +97,7 @@ impl eframe::App for Slideshow {
             _ => (),
         }
 
-        let frame = egui::Frame::default().fill(Color32::BLACK);
-        let response = egui::CentralPanel::default().frame(frame).show(ctx, |ui|
+        let response = egui::CentralPanel::default().show(ctx, |ui|
             ui.centered_and_justified(|ui|
                  match &self.current_state {
                     Ok(AppState::LoadingImage) => {
