@@ -17,7 +17,7 @@ reqwest = { version = "0.11", features = ["gzip", "json"] }
 serde = "1.0"
 serde_json = "1.0"
 sys-info = "0.9"
-tokio = { version = "1.35", features = ["rt", "net", "time", "rt-multi-thread"] }
+tokio = { version = "1.36", features = ["rt", "net", "time", "rt-multi-thread"] }
 
 # Build openssl from source instead of linking it.
 # Required for cross-compilation.
