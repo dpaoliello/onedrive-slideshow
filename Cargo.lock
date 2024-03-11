@@ -852,7 +852,7 @@ dependencies = [
  "glow",
  "glutin",
  "glutin-winit",
- "image",
+ "image 0.24.9",
  "js-sys",
  "log",
  "objc",
@@ -907,7 +907,7 @@ checksum = "97624eaf17a16058265d3a3e712e167798655baf7c8f693de25be75cdd6c57b5"
 dependencies = [
  "egui",
  "enum-map",
- "image",
+ "image 0.24.9",
  "log",
  "mime_guess2",
  "serde",
@@ -1523,9 +1523,22 @@ dependencies = [
  "bytemuck",
  "byteorder",
  "color_quant",
- "jpeg-decoder",
  "num-traits",
  "png",
+]
+
+[[package]]
+name = "image"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9b4f005360d32e9325029b38ba47ebd7a56f3316df09249368939562d518645"
+dependencies = [
+ "bytemuck",
+ "byteorder",
+ "num-traits",
+ "png",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -1614,12 +1627,6 @@ checksum = "8c37f63953c4c63420ed5fd3d6d398c719489b9f872b9fa683262f8edd363c7d"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "jpeg-decoder"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc0000e42512c92e31c2252315bda326620a4e034105e900c98ec492fa077b3e"
 
 [[package]]
 name = "js-sys"
@@ -2053,7 +2060,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
- "image",
+ "image 0.25.0",
  "mockito",
  "native-tls",
  "rand",
@@ -3723,6 +3730,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.48",
+]
+
+[[package]]
+name = "zune-core"
+version = "0.4.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f423a2c17029964870cfaabb1f13dfab7d092a62a29a89264f4d36990ca414a"
+
+[[package]]
+name = "zune-jpeg"
+version = "0.4.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec866b44a2a1fd6133d363f073ca1b179f438f99e7e5bfb1e33f7181facfe448"
+dependencies = [
+ "zune-core",
 ]
 
 [[package]]
