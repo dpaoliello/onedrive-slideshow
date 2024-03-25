@@ -7,7 +7,7 @@ edition = "2021"
 anyhow = "1.0"
 bytes = "1.5"
 cfg-if = "1.0"
-eframe = "0.24"
+eframe = "0.26"
 egui = "0.24"
 egui_extras = { version = "0.24", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
