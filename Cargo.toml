@@ -9,7 +9,7 @@ bytes = "1.5"
 cfg-if = "1.0"
 eframe = "0.24"
 egui = "0.24"
-egui_extras = { version = "0.24", features = ["image"] }
+egui_extras = { version = "0.27", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 mockito = { version = "1.2" }
 rand = "0.8"
