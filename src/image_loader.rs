@@ -215,9 +215,9 @@ fn should_cache_image() -> bool {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_images() {
-    let mut server = mockito::Server::new();
+    let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
     let config_content_redirect_mock = server
@@ -341,14 +341,14 @@ async fn list_images() {
     d1_2_image_next_mock.assert();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn load_image() {
     let temp_dir = std::env::temp_dir().join("onedrive_slideshow_test/load_image");
     if temp_dir.exists() {
         tokio::fs::remove_dir_all(&temp_dir).await.unwrap();
     }
 
-    let mut server = mockito::Server::new();
+    let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
     let thumbnail_mock = server

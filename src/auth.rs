@@ -180,9 +180,9 @@ impl Authenticator {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn auth_then_refresh() {
-    let mut server = mockito::Server::new();
+    let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
     let device_mock = server.mock("POST", "/devicecode")
@@ -252,9 +252,9 @@ async fn auth_then_refresh() {
     refresh_token_mock.assert();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn device_code_expired() {
-    let mut server = mockito::Server::new();
+    let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
     let first_call = std::sync::atomic::AtomicBool::new(true);
@@ -321,9 +321,9 @@ async fn device_code_expired() {
     success_token_mock.assert();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn with_existing_refresh_token() {
-    let mut server = mockito::Server::new();
+    let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
     let (sender, mut reciever) = tokio::sync::mpsc::channel(8);
@@ -351,9 +351,9 @@ async fn with_existing_refresh_token() {
     refresh_token_mock.assert();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn with_existing_but_expired_refresh_token() {
-    let mut server = mockito::Server::new();
+    let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
     let (sender, mut reciever) = tokio::sync::mpsc::channel(8);

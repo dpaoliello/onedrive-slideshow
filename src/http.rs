@@ -120,9 +120,9 @@ impl Client {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn retry_after_server_error() {
-    let mut server = mockito::Server::new();
+    let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
     let fail_mock = server
@@ -153,9 +153,9 @@ async fn retry_after_server_error() {
     assert_eq!(response.unwrap().status(), 200);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn retry_always_error() {
-    let mut server = mockito::Server::new();
+    let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
     let mock = server.mock("GET", "/").with_status(500).expect(6).create();

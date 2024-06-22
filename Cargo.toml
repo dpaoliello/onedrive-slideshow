@@ -5,19 +5,18 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-bytes = "1.5"
+bytes = "1.6"
 cfg-if = "1.0"
-eframe = "0.24"
-egui = "0.24"
-egui_extras = { version = "0.24", features = ["image"] }
+eframe = "0.27"
+egui = "0.27"
+egui_extras = { version = "0.27", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
-mockito = { version = "1.2" }
 rand = "0.8"
 reqwest = { version = "0.11", features = ["gzip", "json"] }
 serde = "1.0"
 serde_json = "1.0"
 sys-info = "0.9"
-tokio = { version = "1.37", features = ["rt", "net", "time", "rt-multi-thread"] }
+tokio = { version = "1.38", features = ["fs", "rt", "net", "time", "rt-multi-thread", "macros"] }
 
 # Build openssl from source instead of linking it.
 # Required for cross-compilation.
@@ -25,3 +24,6 @@ native-tls = { version = "0.2", features = ["vendored"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = {version = "0.52", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security_Credentials"] }
+
+[dev-dependencies]
+mockito = "1.4"
