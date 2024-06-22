@@ -267,14 +267,14 @@ async fn send_update<T>(sender: &Sender<T>, ctx: &egui::Context, message: T) {
     ctx.request_repaint();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn load_multiple_images() {
     let temp_dir = std::env::temp_dir().join("onedrive_slideshow_test/load_multiple_images");
     if temp_dir.exists() {
         tokio::fs::remove_dir_all(&temp_dir).await.unwrap();
     }
 
-    let mut server = mockito::Server::new();
+    let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
     let config_content_mock = server
