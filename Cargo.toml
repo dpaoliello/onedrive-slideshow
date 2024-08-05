@@ -23,7 +23,7 @@ tokio = { version = "1.39", features = ["fs", "rt", "net", "time", "rt-multi-thr
 native-tls = { version = "0.2", features = ["vendored"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = {version = "0.52", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security_Credentials"] }
+windows-sys = {version = "0.59", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security_Credentials"] }
 
 [dev-dependencies]
 mockito = "1.4"
