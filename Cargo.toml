@@ -26,4 +26,4 @@ native-tls = { version = "0.2", features = ["vendored"] }
 windows-sys = {version = "0.59", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security_Credentials"] }
 
 [dev-dependencies]
-mockito = "1.5"
+mockito = "1.6"
