@@ -9,7 +9,7 @@ bytes = "1.9"
 cfg-if = "1.0"
 eframe = "0.27"
 egui = "0.27"
-egui_extras = { version = "0.27", features = ["image"] }
+egui_extras = { version = "0.30", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rand = "0.8"
 reqwest = { version = "0.12", features = ["gzip", "json"] }
