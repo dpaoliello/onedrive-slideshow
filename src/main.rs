@@ -44,7 +44,7 @@ fn main() -> Result<(), eframe::Error> {
                     egui_extras::install_image_loaders(&cc.egui_ctx);
                     let (sender, receiver) = channel(8);
                     task::spawn(image_load_loop(sender.clone(), cc.egui_ctx.clone()));
-                    Box::new(Slideshow::new(receiver, sender))
+                    Ok(Box::new(Slideshow::new(receiver, sender)))
                 }),
             )
         })
