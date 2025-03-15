@@ -144,7 +144,7 @@ impl ImageLoader {
         width: u32,
         all_images: &[String],
     ) -> Result<ColorImage> {
-        let index = rand::thread_rng().gen_range(0..all_images.len());
+        let index = rand::rng().random_range(0..all_images.len());
         let image_id = all_images.get(index).unwrap();
 
         let cache_path = self.cache_directory.join(image_id);
