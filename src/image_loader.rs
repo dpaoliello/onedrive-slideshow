@@ -5,7 +5,6 @@ use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
 use std::{collections::HashMap, path::PathBuf};
-use tokio::sync::mpsc::unbounded_channel;
 
 pub struct ImageLoader {
     client: Client,
@@ -22,8 +21,25 @@ struct DriveResponse {
 }
 
 #[derive(Deserialize)]
+struct DriveImage {
+    #[expect(dead_code)]
+    height: Option<u32>,
+    #[expect(dead_code)]
+    width: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct DriveFolder {
+    #[expect(dead_code)]
+    #[serde(rename = "childCount")]
+    child_count: u32,
+}
+
+#[derive(Deserialize)]
 struct DriveItem {
     id: String,
+    image: Option<DriveImage>,
+    folder: Option<DriveFolder>,
 }
 
 #[derive(Deserialize)]
@@ -53,7 +69,7 @@ impl ImageLoader {
         }
     }
 
-    async fn get_all_ids(&self, token: &str, first_url: Url) -> Result<Vec<DriveItem>> {
+    async fn get_all_items(&self, token: &str, first_url: Url) -> Result<Vec<DriveItem>> {
         let response = self
             .client
             .get::<DriveResponse>(token, first_url)
@@ -83,53 +99,39 @@ impl ImageLoader {
             .await
             .with_context(|| "Get slideshow.txt")?;
 
-        let (image_sender, mut image_receiver) = unbounded_channel();
-        let (directory_sender, mut directory_receiver) = unbounded_channel();
-
         let process_directory = |directory: String| {
             let mut paths = directory.split('/').collect::<Vec<_>>();
             paths.push("children");
-            let get_children_url = self.base_url.append_paths(&paths);
+            let mut get_children_url = self.base_url.append_paths(&paths);
+            get_children_url.set_query(Some("select=id,image,folder&top=1000"));
 
-            // Gather sub-directories to process.
-            let mut list_directories_url = get_children_url.clone();
-            list_directories_url.set_query(Some("$select=id&$filter=folder ne null&$top=999999"));
-            directory_sender
-                .send(self.get_all_ids(token, list_directories_url))
-                .ok()
-                .unwrap();
-
-            // Gather images.
-            let mut list_images_url = get_children_url;
-            list_images_url.set_query(Some("$select=id&$filter=image ne null&$top=999999"));
-            image_sender
-                .send(self.get_all_ids(token, list_images_url))
-                .ok()
-                .unwrap();
+            self.get_all_items(token, get_children_url)
         };
 
         // Seed with initial directories.
+        let mut directories_to_process = Vec::new();
         for directory in config.directories {
-            process_directory(format!("root:/{directory}:"));
-        }
-
-        // Depth-first processing of directories...
-        while let Ok(directories) = directory_receiver.try_recv() {
-            for directory_item in directories.await.with_context(|| "Get sub-directories")? {
-                let id = directory_item.id;
-                process_directory(format!("items/{id}"));
-            }
+            directories_to_process.push(process_directory(format!("root:/{directory}:")));
         }
 
         let mut all_images = Vec::new();
-        while let Ok(images) = image_receiver.try_recv() {
-            all_images.extend(
-                images
-                    .await
-                    .with_context(|| "Get images")?
-                    .into_iter()
-                    .map(|DriveItem { id }| id),
-            )
+        while let Some(items) = directories_to_process.pop() {
+            let items = items.await.with_context(|| "Getting items")?;
+            // Assume that most items are images.
+            all_images.reserve(items.len());
+            for item in items {
+                match item {
+                    DriveItem {
+                        id, image: Some(_), ..
+                    } => all_images.push(id),
+                    DriveItem {
+                        id,
+                        folder: Some(_),
+                        ..
+                    } => directories_to_process.push(process_directory(format!("items/{id}"))),
+                    _ => {}
+                }
+            }
         }
 
         Ok((all_images, config.interval))
@@ -142,7 +144,7 @@ impl ImageLoader {
         width: u32,
         all_images: &[String],
     ) -> Result<ColorImage> {
-        let index = rand::thread_rng().gen_range(0..all_images.len());
+        let index = rand::rng().random_range(0..all_images.len());
         let image_id = all_images.get(index).unwrap();
 
         let cache_path = self.cache_directory.join(image_id);
@@ -235,88 +237,69 @@ async fn list_images() {
         .expect(1)
         .create();
 
-    let folder_query = mockito::Matcher::AllOf(vec![
-        mockito::Matcher::UrlEncoded("$select".into(), "id".into()),
-        mockito::Matcher::UrlEncoded("$filter".into(), "folder ne null".into()),
-    ]);
-    let image_query = mockito::Matcher::AllOf(vec![
-        mockito::Matcher::UrlEncoded("$select".into(), "id".into()),
-        mockito::Matcher::UrlEncoded("$filter".into(), "image ne null".into()),
-    ]);
+    let query = mockito::Matcher::UrlEncoded("select".into(), "id,image,folder".into());
 
-    let d1_folder_mock = server
+    let d1_mock = server
         .mock("GET", "/root:/d1:/children")
-        .match_query(folder_query.clone())
+        .match_query(query.clone())
         .match_header("authorization", "Bearer token")
         .with_body(format!(
-            r#"{{ "@odata.nextLink": "{url}/d1_folder_next", "value": [ {{ "id": "d1_1" }} ] }}"#
+            r#"{{
+            "@odata.nextLink": "{url}/d1_next",
+            "value": [
+                {{ "id": "d1_1", "folder": {{ "childCount": 1 }} }},
+                {{ "id": "d1_3", "image": {{ "height": 1024, "width": 768 }} }},
+                {{ "id": "d1_ignore" }}
+            ] }}"#
         ))
         .expect(1)
         .create();
-    let d1_folder_next_mock = server
-        .mock("GET", "/d1_folder_next")
+    let d1_next_mock = server
+        .mock("GET", "/d1_next")
         .match_header("authorization", "Bearer token")
-        .with_body(r#"{ "value": [ { "id": "d1_2" } ] }"#)
-        .expect(1)
-        .create();
-    let d1_images_mock = server
-        .mock("GET", "/root:/d1:/children")
-        .match_query(image_query.clone())
-        .match_header("authorization", "Bearer token")
-        .with_body(format!(
-            r#"{{ "@odata.nextLink": "{url}/d1_image_next", "value": [ {{ "id": "d1_3" }} ] }}"#
-        ))
-        .expect(1)
-        .create();
-    let d1_image_next_mock = server
-        .mock("GET", "/d1_image_next")
-        .match_header("authorization", "Bearer token")
-        .with_body(r#"{ "value": [ { "id": "d1_4" } ] }"#)
+        .with_body(
+            r#"{
+            "value": [
+                { "id": "d1_2", "folder": { "childCount": 1 } },
+                { "id": "d1_4", "image" : {} }
+            ] }"#,
+        )
         .expect(1)
         .create();
 
-    let d2_folder_mock = server
+    let d2_mock = server
         .mock("GET", "/root:/d2:/children")
-        .match_query(folder_query.clone())
+        .match_query(query.clone())
         .match_header("authorization", "Bearer token")
-        .with_body(r#"{ "value": [ ] }"#)
-        .expect(1)
-        .create();
-    let d2_image_mock = server
-        .mock("GET", "/root:/d2:/children")
-        .match_query(image_query.clone())
-        .match_header("authorization", "Bearer token")
-        .with_body(r#"{ "value": [ { "id": "d2_1" } ] }"#)
+        .with_body(
+            r#"{
+            "value": [ { "id": "d2_1", "image": {} } ]
+        }"#,
+        )
         .expect(1)
         .create();
 
-    let d1_1_folder_mock = server
+    let d1_1_mock = server
         .mock("GET", "/items/d1_1/children")
-        .match_query(folder_query.clone())
+        .match_query(query.clone())
         .match_header("authorization", "Bearer token")
-        .with_body(r#"{ "value": [ ] }"#)
-        .expect(1)
-        .create();
-    let d1_1_image_mock = server
-        .mock("GET", "/items/d1_1/children")
-        .match_query(image_query.clone())
-        .match_header("authorization", "Bearer token")
-        .with_body(r#"{ "value": [ { "id": "d1_1_1" } ] }"#)
+        .with_body(
+            r#"{
+            "value": [ { "id": "d1_1_1", "image": {} } ]
+        }"#,
+        )
         .expect(1)
         .create();
 
-    let d1_2_folder_mock = server
+    let d1_2_mock = server
         .mock("GET", "/items/d1_2/children")
-        .match_query(folder_query)
+        .match_query(query)
         .match_header("authorization", "Bearer token")
-        .with_body(r#"{ "value": [ ] }"#)
-        .expect(1)
-        .create();
-    let d1_2_image_next_mock = server
-        .mock("GET", "/items/d1_2/children")
-        .match_query(image_query)
-        .match_header("authorization", "Bearer token")
-        .with_body(r#"{ "value": [ { "id": "d1_2_1" } ] }"#)
+        .with_body(
+            r#"{
+            "value": [ { "id": "d1_2_1", "image": {} } ]
+        }"#,
+        )
         .expect(1)
         .create();
 
@@ -329,16 +312,11 @@ async fn list_images() {
 
     config_content_redirect_mock.assert();
     config_content_mock.assert();
-    d1_folder_mock.assert();
-    d1_folder_next_mock.assert();
-    d1_images_mock.assert();
-    d1_image_next_mock.assert();
-    d2_folder_mock.assert();
-    d2_image_mock.assert();
-    d1_1_folder_mock.assert();
-    d1_1_image_mock.assert();
-    d1_2_folder_mock.assert();
-    d1_2_image_next_mock.assert();
+    d1_mock.assert();
+    d1_next_mock.assert();
+    d2_mock.assert();
+    d1_1_mock.assert();
+    d1_2_mock.assert();
 }
 
 #[tokio::test(flavor = "multi_thread")]
