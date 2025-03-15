@@ -76,13 +76,21 @@ impl Client {
     where
         T: serde::de::DeserializeOwned,
     {
-        self.send_with_retry(|client| client.get(url.clone()).bearer_auth(token))
+        let raw_response = self
+            .send_with_retry(|client| client.get(url.clone()).bearer_auth(token))
             .await
-            .with_context(|| "Sending request failed")?
-            .error_for_status()?
-            .json::<T>()
-            .await
-            .with_context(|| "Parsing response failed")
+            .with_context(|| "Sending request failed")?;
+
+        match raw_response.error_for_status_ref() {
+            Ok(_) => raw_response
+                .json::<T>()
+                .await
+                .with_context(|| "Parsing response failed"),
+            Err(err) => Err(err).context(format!(
+                "Response: {}",
+                raw_response.text().await.unwrap_or_default()
+            )),
+        }
     }
 
     pub async fn post<T>(
