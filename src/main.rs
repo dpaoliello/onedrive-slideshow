@@ -226,7 +226,7 @@ async fn get_next_image(
     // Check for expiry.
     if all_images
         .as_ref()
-        .map_or(false, |list| Instant::now() >= list.refresh_after)
+        .is_some_and(|list| Instant::now() >= list.refresh_after)
     {
         all_images = None;
     }
@@ -284,27 +284,13 @@ async fn load_multiple_images() {
         .expect(1)
         .create();
 
-    let folder_query = mockito::Matcher::AllOf(vec![
-        mockito::Matcher::UrlEncoded("$select".into(), "id".into()),
-        mockito::Matcher::UrlEncoded("$filter".into(), "folder ne null".into()),
-    ]);
-    let image_query = mockito::Matcher::AllOf(vec![
-        mockito::Matcher::UrlEncoded("$select".into(), "id".into()),
-        mockito::Matcher::UrlEncoded("$filter".into(), "image ne null".into()),
-    ]);
+    let query = mockito::Matcher::UrlEncoded("select".into(), "id,image,folder".into());
 
-    let d1_folder_mock = server
+    let d1_mock = server
         .mock("GET", "/root:/d1:/children")
-        .match_query(folder_query.clone())
+        .match_query(query.clone())
         .match_header("authorization", "Bearer token")
-        .with_body(r#"{ "value": [ ] }"#)
-        .expect(1)
-        .create();
-    let d1_image_mock = server
-        .mock("GET", "/root:/d1:/children")
-        .match_query(image_query.clone())
-        .match_header("authorization", "Bearer token")
-        .with_body(r#"{ "value": [ { "id": "the_image" } ] }"#)
+        .with_body(r#"{ "value": [ { "id": "the_image", "image": {} } ] }"#)
         .expect(1)
         .create();
 
@@ -352,15 +338,13 @@ async fn load_multiple_images() {
     assert_eq!(actual_image.width(), 1);
     assert_eq!(all_images.images, &["the_image".to_string()]);
     config_content_mock.assert();
-    d1_folder_mock.assert();
-    d1_image_mock.assert();
+    d1_mock.assert();
     thumbnail_mock.assert();
     download_mock.assert();
 
     // Second load should be entirely offline since it will use the cache.
     config_content_mock.remove();
-    d1_folder_mock.remove();
-    d1_image_mock.remove();
+    d1_mock.remove();
     thumbnail_mock.remove();
     download_mock.remove();
     let (actual_image, mut all_images) = get_next_image(
@@ -384,8 +368,7 @@ async fn load_multiple_images() {
 
     // Make the image list expire: this will cause it to reload, but the image should come from cache.
     let config_content_mock = config_content_mock.create();
-    let d1_folder_mock = d1_folder_mock.create();
-    let d1_image_mock = d1_image_mock.create();
+    let d1_mock = d1_mock.create();
     all_images.refresh_after = Instant::now();
     let (actual_image, all_images) = get_next_image(
         &image_loader,
@@ -406,6 +389,5 @@ async fn load_multiple_images() {
     assert_eq!(actual_image.width(), 1);
     assert_eq!(all_images.images, &["the_image".to_string()]);
     config_content_mock.assert();
-    d1_folder_mock.assert();
-    d1_image_mock.assert();
+    d1_mock.assert();
 }
