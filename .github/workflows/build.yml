@@ -32,6 +32,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
+      - name: Install gtk lib
+        run: sudo apt install libwebkit2gtk-4.1-dev
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+
       - name: Run tests
         run: cargo test --locked
 
@@ -63,6 +67,9 @@ jobs:
 
       - name: Install cross
         run: cargo install cross
+
+      - name: Install gtk lib
+        run: sudo apt install libwebkit2gtk-4.1-dev
 
       - name: Build ARMv7
         run: cross build --locked --release --target armv7-unknown-linux-gnueabihf
