@@ -1700,6 +1700,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "cfg-if",
+ "crossbeam-utils",
  "mockito",
  "native-tls",
  "rand 0.9.0",
