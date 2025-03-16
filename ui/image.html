@@ -1,0 +1,25 @@
+<html>
+
+<head>
+    <style>
+        html {
+          background-color: black;
+        }
+        img {
+            object-fit: contain;
+        }
+    </style>
+    <script>
+        window.addEventListener('click', () => window.ipc.postMessage('onClick'))
+    </script>
+</head>
+
+<body>
+    <img
+        id="main_image"
+        src="http://slideshow.localhost/IMAGE_SRC"
+        height="100%"
+        width="100%" />
+</body>
+
+</html>
