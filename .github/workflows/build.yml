@@ -56,28 +56,3 @@ jobs:
               target/release/onedrive_slideshow*
               target/**/release/onedrive_slideshow*
           if-no-files-found: error
-
-  cross-build:
-    runs-on: ubuntu-latest
-    env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Install cross
-        run: cargo install cross
-
-      - name: Install gtk lib
-        run: sudo apt install libwebkit2gtk-4.1-dev
-
-      - name: Build ARMv7
-        run: cross build --locked --release --target armv7-unknown-linux-gnueabihf
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: artifact-cross-build
-          path: |
-              target/**/release/onedrive_slideshow*
-          if-no-files-found: error
