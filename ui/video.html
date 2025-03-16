@@ -1,0 +1,28 @@
+<html>
+
+<head>
+    <style>
+        html {
+          background-color: black;
+        }
+        video {
+            object-fit: contain;
+        }
+    </style>
+    <script>
+        window.addEventListener('click', () => window.ipc.postMessage('onClick'))
+    </script>
+</head>
+
+<body>
+    <video
+        autoplay="true"
+        loop="true"
+        muted="true"
+        height="100%"
+        width="100%">
+        <source src="http://slideshow.localhost/VIDEO_SRC" />
+    </video>
+</body>
+
+</html>
