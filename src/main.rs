@@ -99,10 +99,7 @@ fn main() -> Result<(), wry::Error> {
                                       webview: &wry::WebView| {
                 let html = match &item {
                     Item::Image(id) => include_str!("../ui/image.html").replace("IMAGE_SRC", id),
-                    _ => {
-                        // TODO: Implement displaying videos.
-                        return;
-                    }
+                    Item::Video(id, _) => include_str!("../ui/video.html").replace("VIDEO_SRC", id),
                 };
                 *previous_item = current_item.take();
                 current_item = Some(item);
@@ -188,7 +185,7 @@ async fn item_load_loop(proxy: EventLoopProxy<UserEvent>) {
             Ok((item, all_items)) => {
                 interval = match &item {
                     Item::Image(_) => all_items.interval,
-                    Item::Video(_, duration) => *duration * 2,
+                    Item::Video(_, duration) => std::cmp::max(*duration * 2, all_items.interval),
                 };
                 let _ = proxy.send_event(UserEvent::LoadItem(item));
                 Some(all_items)
