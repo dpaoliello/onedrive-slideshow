@@ -7,8 +7,14 @@ mod item_loader;
 
 use anyhow::Result;
 use auth::Authenticator;
+use crossbeam_utils::atomic::AtomicCell;
 use item_loader::{Item, ItemLoader};
-use std::{borrow::Cow, path::PathBuf, sync::LazyLock, time::Duration};
+use std::{
+    borrow::Cow,
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy},
@@ -24,28 +30,11 @@ enum UserEvent {
     Error(anyhow::Error),
     Loading,
     WaitingForAuth { auth_url: String, code: String },
-    LoadItem(Item),
+    LoadItem(Item, Duration),
 }
 
 const ON_ERROR_REFRESH_TIME: Duration = Duration::from_secs(1);
 const ITEM_LIST_REFRESH_TIME: Duration = Duration::from_secs(60 * 60);
-
-fn protocol_handler(
-    _: WebViewId<'_>,
-    request: wry::http::Request<Vec<u8>>,
-    responder: RequestAsyncResponder,
-) {
-    let path = CACHE_DIRECTORY.join(&request.uri().path()[1..]);
-    task::spawn(async move {
-        let content = Cow::Owned(tokio::fs::read(path).await.unwrap());
-        responder.respond(
-            wry::http::Response::builder()
-                .header(wry::http::header::CACHE_CONTROL, "no-store")
-                .body(content)
-                .unwrap(),
-        )
-    });
-}
 
 static CACHE_DIRECTORY: LazyLock<PathBuf> =
     LazyLock::new(|| std::env::temp_dir().join("onedrive_slideshow"));
@@ -96,19 +85,24 @@ fn main() -> Result<(), wry::Error> {
                 builder.build_gtk(vbox)?
             };
 
-            task::spawn(item_load_loop(event_loop.create_proxy()));
+            let delay_until = Arc::new(AtomicCell::new(Instant::now()));
+            task::spawn(item_load_loop(
+                event_loop.create_proxy(),
+                delay_until.clone(),
+            ));
             let mut current_item = None;
             let mut previous_item = None;
 
             let mut load_item = move |item: Item,
-                                      previous_item: &mut Option<Item>,
+                                      interval: Duration,
+                                      previous_item: &mut Option<(Item, Duration)>,
                                       webview: &wry::WebView| {
                 let html = match &item {
                     Item::Image(id) => include_str!("../ui/image.html").replace("IMAGE_SRC", id),
                     Item::Video(id, _) => include_str!("../ui/video.html").replace("VIDEO_SRC", id),
                 };
                 *previous_item = current_item.take();
-                current_item = Some(item);
+                current_item = Some((item, interval));
                 webview.load_html(&html).unwrap();
             };
 
@@ -133,10 +127,13 @@ fn main() -> Result<(), wry::Error> {
                                 .replace("CODE", &code);
                             webview.load_html(&html).unwrap();
                         }
-                        UserEvent::LoadItem(item) => load_item(item, &mut previous_item, &webview),
+                        UserEvent::LoadItem(item, interval) => {
+                            load_item(item, interval, &mut previous_item, &webview)
+                        }
                         UserEvent::PreviousItem => {
-                            if let Some(item) = previous_item.take() {
-                                load_item(item, &mut previous_item, &webview);
+                            if let Some((item, interval)) = previous_item.take() {
+                                delay_until.store(Instant::now() + interval);
+                                load_item(item, interval, &mut previous_item, &webview);
                             }
                         }
                         UserEvent::Error(err) => {
@@ -151,7 +148,24 @@ fn main() -> Result<(), wry::Error> {
         })
 }
 
-async fn item_load_loop(proxy: EventLoopProxy<UserEvent>) {
+fn protocol_handler(
+    _: WebViewId<'_>,
+    request: wry::http::Request<Vec<u8>>,
+    responder: RequestAsyncResponder,
+) {
+    let path = CACHE_DIRECTORY.join(&request.uri().path()[1..]);
+    task::spawn(async move {
+        let content = Cow::Owned(tokio::fs::read(path).await.unwrap());
+        responder.respond(
+            wry::http::Response::builder()
+                .header(wry::http::header::CACHE_CONTROL, "no-store")
+                .body(content)
+                .unwrap(),
+        )
+    });
+}
+
+async fn item_load_loop(proxy: EventLoopProxy<UserEvent>, delay_until: Arc<AtomicCell<Instant>>) {
     let _ = proxy.send_event(UserEvent::Loading);
 
     let (auth_sender, mut auth_receiver) = channel(8);
@@ -183,25 +197,27 @@ async fn item_load_loop(proxy: EventLoopProxy<UserEvent>) {
         get_auth_token(&proxy, &mut authenticator).await,
         None,
     );
-    let mut interval = Duration::ZERO;
-    loop {
-        tokio::time::sleep(interval).await;
 
-        let all_items = match next_item.await {
+    loop {
+        while Instant::now() < delay_until.load() {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+
+        let (all_items, interval) = match next_item.await {
             Ok((item, all_items)) => {
-                interval = match &item {
+                let interval = match &item {
                     Item::Image(_) => all_items.interval,
                     Item::Video(_, duration) => std::cmp::max(*duration * 2, all_items.interval),
                 };
-                let _ = proxy.send_event(UserEvent::LoadItem(item));
-                Some(all_items)
+                let _ = proxy.send_event(UserEvent::LoadItem(item, interval));
+                (Some(all_items), interval)
             }
             Err((err, all_items)) => {
-                interval = ON_ERROR_REFRESH_TIME;
                 let _ = proxy.send_event(UserEvent::Error(err));
-                all_items
+                (all_items, ON_ERROR_REFRESH_TIME)
             }
         };
+        delay_until.store(Instant::now() + interval);
 
         next_item = get_next_item(
             &loader,
