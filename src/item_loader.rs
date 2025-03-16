@@ -3,13 +3,28 @@ use anyhow::{Context, Result};
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
-pub struct ImageLoader {
+pub(crate) struct ItemLoader {
     client: Client,
     base_url: Url,
     config_url: Url,
     cache_directory: PathBuf,
+}
+
+#[cfg_attr(test, derive(Eq, PartialEq, Debug, PartialOrd, Ord))]
+#[derive(Clone)]
+pub(crate) enum Item {
+    Image(String),
+    Video(String, Duration),
+}
+
+impl Item {
+    pub fn get_id(&self) -> &str {
+        match self {
+            Item::Image(id) | Item::Video(id, ..) => id,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -28,6 +43,11 @@ struct DriveImage {
 }
 
 #[derive(Deserialize)]
+struct DriveVideo {
+    duration: u64,
+}
+
+#[derive(Deserialize)]
 struct DriveFolder {
     #[expect(dead_code)]
     #[serde(rename = "childCount")]
@@ -39,6 +59,7 @@ struct DriveItem {
     id: String,
     image: Option<DriveImage>,
     folder: Option<DriveFolder>,
+    video: Option<DriveVideo>,
 }
 
 #[derive(Deserialize)]
@@ -47,7 +68,7 @@ struct Config {
     interval: u64,
 }
 
-impl ImageLoader {
+impl ItemLoader {
     pub fn new(base_url: &str, cache_directory: PathBuf) -> Self {
         let base_url = Url::parse(base_url).unwrap();
         Self {
@@ -81,7 +102,7 @@ impl ImageLoader {
         Ok(items)
     }
 
-    pub async fn get_image_list(&self, token: &str) -> Result<(Vec<String>, u64)> {
+    pub async fn get_item_list(&self, token: &str) -> Result<(Vec<Item>, u64)> {
         let config = self
             .client
             .get::<Config>(token, self.config_url.clone())
@@ -92,7 +113,7 @@ impl ImageLoader {
             let mut paths = directory.split('/').collect::<Vec<_>>();
             paths.push("children");
             let mut get_children_url = self.base_url.append_paths(&paths);
-            get_children_url.set_query(Some("select=id,image,folder&top=1000"));
+            get_children_url.set_query(Some("select=id,image,folder,video&top=1000"));
 
             self.get_all_items(token, get_children_url)
         };
@@ -103,16 +124,21 @@ impl ImageLoader {
             directories_to_process.push(process_directory(format!("root:/{directory}:")));
         }
 
-        let mut all_images = Vec::new();
+        let mut all_items = Vec::new();
         while let Some(items) = directories_to_process.pop() {
             let items = items.await.with_context(|| "Getting items")?;
-            // Assume that most items are images.
-            all_images.reserve(items.len());
+            // Assume that most items are items to display.
+            all_items.reserve(items.len());
             for item in items {
                 match item {
                     DriveItem {
                         id, image: Some(_), ..
-                    } => all_images.push(id),
+                    } => all_items.push(Item::Image(id)),
+                    DriveItem {
+                        id,
+                        video: Some(DriveVideo { duration }),
+                        ..
+                    } => all_items.push(Item::Video(id, Duration::from_millis(duration))),
                     DriveItem {
                         id,
                         folder: Some(_),
@@ -123,23 +149,24 @@ impl ImageLoader {
             }
         }
 
-        Ok((all_images, config.interval))
+        Ok((all_items, config.interval))
     }
 
-    pub async fn load_next(&self, token: &str, all_images: &[String]) -> Result<String> {
-        let index = rand::rng().random_range(0..all_images.len());
-        let image_id = all_images.get(index).unwrap();
+    pub async fn load_next(&self, token: &str, all_items: &[Item]) -> Result<Item> {
+        let index = rand::rng().random_range(0..all_items.len());
+        let item = all_items.get(index).unwrap();
+        let id = item.get_id();
 
-        let cache_path = self.cache_directory.join(image_id);
+        let cache_path = self.cache_directory.join(id);
         if !cache_path.exists() {
-            let content_url = self.base_url.append_paths(&["items", image_id, "content"]);
+            let content_url = self.base_url.append_paths(&["items", id, "content"]);
             let data = self
                 .client
                 .download(token, content_url)
                 .await
-                .with_context(|| "Downloading image failed")?;
+                .with_context(|| "Downloading item failed")?;
 
-            if should_cache_image() {
+            if should_cache_item() {
                 if !self.cache_directory.exists() {
                     tokio::fs::create_dir_all(&self.cache_directory)
                         .await
@@ -147,15 +174,15 @@ impl ImageLoader {
                 }
                 tokio::fs::write(&cache_path, &data)
                     .await
-                    .with_context(|| "Store image in cache")?;
+                    .with_context(|| "Store item in cache")?;
             }
         }
 
-        Ok(cache_path.to_string_lossy().into_owned())
+        Ok(item.clone())
     }
 }
 
-fn should_cache_image() -> bool {
+fn should_cache_item() -> bool {
     cfg_if::cfg_if! {
         if #[cfg(test)] {
             true
@@ -167,7 +194,7 @@ fn should_cache_image() -> bool {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn list_images() {
+async fn list_items() {
     let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
@@ -186,7 +213,7 @@ async fn list_images() {
         .expect(1)
         .create();
 
-    let query = mockito::Matcher::UrlEncoded("select".into(), "id,image,folder".into());
+    let query = mockito::Matcher::UrlEncoded("select".into(), "id,image,folder,video".into());
 
     let d1_mock = server
         .mock("GET", "/root:/d1:/children")
@@ -210,7 +237,7 @@ async fn list_images() {
             r#"{
             "value": [
                 { "id": "d1_2", "folder": { "childCount": 1 } },
-                { "id": "d1_4", "image" : {} }
+                { "id": "d1_4", "video" : { "duration": 1024 } }
             ] }"#,
         )
         .expect(1)
@@ -246,18 +273,27 @@ async fn list_images() {
         .match_header("authorization", "Bearer token")
         .with_body(
             r#"{
-            "value": [ { "id": "d1_2_1", "image": {} } ]
+            "value": [ { "id": "d1_2_1", "video": { "duration": 100 } } ]
         }"#,
         )
         .expect(1)
         .create();
 
-    let temp_dir = std::env::temp_dir().join("onedrive_slideshow_test/list_images");
-    let image_loader = ImageLoader::new(&url, temp_dir);
-    let (mut all_images, interval) = image_loader.get_image_list("token").await.unwrap();
-    all_images.sort();
+    let temp_dir = std::env::temp_dir().join("onedrive_slideshow_test/list_items");
+    let item_loader = ItemLoader::new(&url, temp_dir);
+    let (mut all_items, interval) = item_loader.get_item_list("token").await.unwrap();
+    all_items.sort();
     assert_eq!(interval, 42);
-    assert_eq!(&all_images, &["d1_1_1", "d1_2_1", "d1_3", "d1_4", "d2_1"]);
+    assert_eq!(
+        &all_items,
+        &[
+            Item::Image("d1_1_1".to_string()),
+            Item::Image("d1_3".to_string()),
+            Item::Image("d2_1".to_string()),
+            Item::Video("d1_2_1".to_string(), Duration::from_millis(100)),
+            Item::Video("d1_4".to_string(), Duration::from_millis(1024)),
+        ]
+    );
 
     config_content_redirect_mock.assert();
     config_content_mock.assert();
@@ -285,21 +321,29 @@ async fn load_image() {
         .expect(1)
         .create();
 
-    let image_loader = ImageLoader::new(&url, temp_dir.clone());
-    let actual_image = image_loader
-        .load_next("token", &["1".into()])
+    let item_loader = ItemLoader::new(&url, temp_dir.clone());
+    let test_item = Item::Image("1".to_string());
+    let actual_image = item_loader
+        .load_next("token", &[test_item.clone()])
         .await
         .unwrap();
-    assert_eq!(actual_image, temp_dir.clone().join("1").to_str().unwrap());
+    assert_eq!(actual_image, test_item);
+    assert_eq!(
+        temp_dir.clone().join("1").to_str().unwrap(),
+        temp_dir
+            .join(test_item.get_id())
+            .to_string_lossy()
+            .into_owned()
+    );
     content_mock.assert();
 
     // Loading again should use the cached image.
     content_mock.remove();
-    let actual_image = image_loader
-        .load_next("token", &["1".into()])
+    let actual_image = item_loader
+        .load_next("token", &[test_item.clone()])
         .await
         .unwrap();
-    assert_eq!(actual_image, temp_dir.clone().join("1").to_str().unwrap());
+    assert_eq!(actual_image, test_item);
 
     // But loading a different image will download again.
     let content_mock = server
@@ -309,10 +353,18 @@ async fn load_image() {
         .expect(1)
         .create();
 
-    let actual_image = image_loader
-        .load_next("token", &["2".into()])
+    let test_item = Item::Image("2".to_string());
+    let actual_image = item_loader
+        .load_next("token", &[test_item.clone()])
         .await
         .unwrap();
-    assert_eq!(actual_image, temp_dir.clone().join("2").to_str().unwrap());
+    assert_eq!(actual_image, test_item);
+    assert_eq!(
+        temp_dir.clone().join("2").to_str().unwrap(),
+        temp_dir
+            .join(test_item.get_id())
+            .to_string_lossy()
+            .into_owned()
+    );
     content_mock.assert();
 }
