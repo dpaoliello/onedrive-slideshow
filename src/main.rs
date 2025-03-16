@@ -38,6 +38,7 @@ fn protocol_handler(
     let content = Cow::Owned(std::fs::read(path).unwrap());
     wry::http::Response::builder()
         .header(wry::http::header::CONTENT_TYPE, "image/jpeg")
+        .header(wry::http::header::CACHE_CONTROL, "no-store")
         .body(content)
         .unwrap()
 }
