@@ -15,7 +15,7 @@ use tao::{
     window::WindowBuilder,
 };
 use tokio::{sync::mpsc::channel, task, time::Instant};
-use wry::{RequestAsyncResponder, WebViewBuilder, WebViewId};
+use wry::{RequestAsyncResponder, WebContext, WebViewBuilder, WebViewId};
 
 use crate::auth::AuthMessage;
 
@@ -70,7 +70,8 @@ fn main() -> Result<(), wry::Error> {
                 }
             };
 
-            let builder = WebViewBuilder::new()
+            let mut web_context = WebContext::new(Some(CACHE_DIRECTORY.join("webview")));
+            let builder = WebViewBuilder::with_web_context(&mut web_context)
                 .with_asynchronous_custom_protocol("slideshow".to_string(), protocol_handler)
                 .with_ipc_handler(handler)
                 .with_accept_first_mouse(true);
