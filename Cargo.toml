@@ -7,16 +7,14 @@ edition = "2021"
 anyhow = "1.0"
 bytes = "1.9"
 cfg-if = "1.0"
-eframe = "0.31"
-egui = "0.31"
-egui_extras = { version = "0.31", features = ["image"] }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rand = "0.9"
 reqwest = { version = "0.12", features = ["gzip", "json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sys-info = "0.9"
+tao = "0.32"
 tokio = { version = "1.43", features = ["fs", "rt", "net", "time", "rt-multi-thread", "macros"] }
+wry = "0.50"
 
 # Build openssl from source instead of linking it.
 # Required for cross-compilation.

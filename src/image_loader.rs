@@ -1,10 +1,9 @@
 use crate::http::{AppendPaths, Client};
-use anyhow::{anyhow, Context, Result};
-use egui::ColorImage;
+use anyhow::{Context, Result};
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 pub struct ImageLoader {
     client: Client,
@@ -40,16 +39,6 @@ struct DriveItem {
     id: String,
     image: Option<DriveImage>,
     folder: Option<DriveFolder>,
-}
-
-#[derive(Deserialize)]
-struct ThumbnailResponse {
-    value: Vec<HashMap<String, ThumbnailItem>>,
-}
-
-#[derive(Deserialize)]
-struct ThumbnailItem {
-    url: String,
 }
 
 #[derive(Deserialize)]
@@ -137,46 +126,16 @@ impl ImageLoader {
         Ok((all_images, config.interval))
     }
 
-    pub async fn load_next(
-        &self,
-        token: &str,
-        height: u32,
-        width: u32,
-        all_images: &[String],
-    ) -> Result<ColorImage> {
+    pub async fn load_next(&self, token: &str, all_images: &[String]) -> Result<String> {
         let index = rand::rng().random_range(0..all_images.len());
         let image_id = all_images.get(index).unwrap();
 
         let cache_path = self.cache_directory.join(image_id);
-        let data = if cache_path.exists() {
-            tokio::fs::read(cache_path)
-                .await
-                .with_context(|| "Reading cached image failed")?
-                .into()
-        } else {
-            let mut thumbnail_url = self
-                .base_url
-                .append_paths(&["items", image_id, "thumbnails"]);
-            thumbnail_url.set_query(Some(&format!("select=c{height}x{width}")));
-            let thumbnail_response = self
-                .client
-                .get::<ThumbnailResponse>(token, thumbnail_url)
-                .await
-                .with_context(|| "Get thumbnail")?;
-            let (_, ThumbnailItem { url: download_url }) = thumbnail_response
-                .value
-                .into_iter()
-                .next()
-                .ok_or(anyhow!("Bad thumbnail response"))?
-                .into_iter()
-                .next()
-                .ok_or(anyhow!("No thumbnail returned"))?;
+        if !cache_path.exists() {
+            let content_url = self.base_url.append_paths(&["items", image_id, "content"]);
             let data = self
                 .client
-                .download(
-                    token,
-                    Url::parse(&download_url).with_context(|| "Download URL invalid")?,
-                )
+                .download(token, content_url)
                 .await
                 .with_context(|| "Downloading image failed")?;
 
@@ -190,19 +149,9 @@ impl ImageLoader {
                     .await
                     .with_context(|| "Store image in cache")?;
             }
+        }
 
-            data
-        };
-
-        let image = image::load_from_memory(&data)
-            .map_err(|err| anyhow!(err).context("Image parsing failed"))?;
-        let size = [image.width() as _, image.height() as _];
-        let image_buffer = image.to_rgba8();
-        let pixels = image_buffer.as_flat_samples();
-        Ok(egui::ColorImage::from_rgba_unmultiplied(
-            size,
-            pixels.as_slice(),
-        ))
+        Ok(cache_path.to_string_lossy().into_owned())
     }
 }
 
@@ -329,74 +278,41 @@ async fn load_image() {
     let mut server = mockito::Server::new_async().await;
     let url = server.url();
 
-    let thumbnail_mock = server
-        .mock("GET", "/items/1/thumbnails")
-        .match_query(mockito::Matcher::UrlEncoded(
-            "select".into(),
-            "c1024x768".into(),
-        ))
+    let content_mock = server
+        .mock("GET", "/items/1/content")
         .match_header("authorization", "Bearer token")
-        .with_body(format!(
-            r#"{{ "value": [ {{ "c1024x768": {{ "url": "{url}/download" }} }} ] }} "#
-        ))
+        .with_body(b"0")
         .expect(1)
         .create();
 
-    let mut image_data = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new(&mut image_data)
-        .encode_image(&image::RgbImage::new(1, 1))
-        .unwrap();
-    let download_mock = server
-        .mock("GET", "/download")
-        .with_body(image_data)
-        .expect(1)
-        .create();
-
-    let image_loader = ImageLoader::new(&url, temp_dir);
+    let image_loader = ImageLoader::new(&url, temp_dir.clone());
     let actual_image = image_loader
-        .load_next("token", 1024, 768, &["1".into()])
+        .load_next("token", &["1".into()])
         .await
         .unwrap();
-    assert_eq!(actual_image.height(), 1);
-    assert_eq!(actual_image.width(), 1);
-    thumbnail_mock.assert();
-    download_mock.assert();
+    assert_eq!(actual_image, temp_dir.clone().join("1").to_str().unwrap());
+    content_mock.assert();
 
     // Loading again should use the cached image.
-    thumbnail_mock.remove();
-    download_mock.remove();
+    content_mock.remove();
     let actual_image = image_loader
-        .load_next("token", 1024, 768, &["1".into()])
+        .load_next("token", &["1".into()])
         .await
         .unwrap();
-    assert_eq!(actual_image.height(), 1);
-    assert_eq!(actual_image.width(), 1);
+    assert_eq!(actual_image, temp_dir.clone().join("1").to_str().unwrap());
 
     // But loading a different image will download again.
-    let thumbnail_mock = server
-        .mock("GET", "/items/2/thumbnails")
-        .match_query(mockito::Matcher::UrlEncoded(
-            "select".into(),
-            "c1024x768".into(),
-        ))
+    let content_mock = server
+        .mock("GET", "/items/2/content")
         .match_header("authorization", "Bearer token")
-        .with_body(format!(
-            r#"{{ "value": [ {{ "c1024x768": {{ "url": "{url}/download" }} }} ] }} "#
-        ))
+        .with_body(b"0")
         .expect(1)
         .create();
 
-    let mut image_data = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new(&mut image_data)
-        .encode_image(&image::RgbImage::new(2, 2))
-        .unwrap();
-    let download_mock = download_mock.with_body(image_data).create();
     let actual_image = image_loader
-        .load_next("token", 1024, 768, &["2".into()])
+        .load_next("token", &["2".into()])
         .await
         .unwrap();
-    assert_eq!(actual_image.height(), 2);
-    assert_eq!(actual_image.width(), 2);
-    thumbnail_mock.assert();
-    download_mock.assert();
+    assert_eq!(actual_image, temp_dir.clone().join("2").to_str().unwrap());
+    content_mock.assert();
 }
