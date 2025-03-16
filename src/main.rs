@@ -15,7 +15,7 @@ use tao::{
     window::WindowBuilder,
 };
 use tokio::{sync::mpsc::channel, task, time::Instant};
-use wry::{WebViewBuilder, WebViewId};
+use wry::{RequestAsyncResponder, WebViewBuilder, WebViewId};
 
 use crate::auth::AuthMessage;
 
@@ -31,15 +31,20 @@ const ON_ERROR_REFRESH_TIME: Duration = Duration::from_secs(1);
 const ITEM_LIST_REFRESH_TIME: Duration = Duration::from_secs(60 * 60);
 
 fn protocol_handler(
-    _: WebViewId,
+    _: WebViewId<'_>,
     request: wry::http::Request<Vec<u8>>,
-) -> wry::http::Response<Cow<'static, [u8]>> {
+    responder: RequestAsyncResponder,
+) {
     let path = CACHE_DIRECTORY.join(&request.uri().path()[1..]);
-    let content = Cow::Owned(std::fs::read(path).unwrap());
-    wry::http::Response::builder()
-        .header(wry::http::header::CACHE_CONTROL, "no-store")
-        .body(content)
-        .unwrap()
+    task::spawn(async move {
+        let content = Cow::Owned(tokio::fs::read(path).await.unwrap());
+        responder.respond(
+            wry::http::Response::builder()
+                .header(wry::http::header::CACHE_CONTROL, "no-store")
+                .body(content)
+                .unwrap(),
+        )
+    });
 }
 
 static CACHE_DIRECTORY: LazyLock<PathBuf> =
@@ -66,7 +71,7 @@ fn main() -> Result<(), wry::Error> {
             };
 
             let builder = WebViewBuilder::new()
-                .with_custom_protocol("slideshow".to_string(), protocol_handler)
+                .with_asynchronous_custom_protocol("slideshow".to_string(), protocol_handler)
                 .with_ipc_handler(handler)
                 .with_accept_first_mouse(true);
 
