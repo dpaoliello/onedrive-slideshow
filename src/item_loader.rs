@@ -1,5 +1,5 @@
 use crate::http::{AppendPaths, Client};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
@@ -166,29 +166,55 @@ impl ItemLoader {
                 .await
                 .with_context(|| "Downloading item failed")?;
 
-            if should_cache_item() {
-                if !self.cache_directory.exists() {
-                    tokio::fs::create_dir_all(&self.cache_directory)
-                        .await
-                        .with_context(|| "Create cache directory")?;
-                }
-                tokio::fs::write(&cache_path, &data)
-                    .await
-                    .with_context(|| "Store item in cache")?;
-            }
+            self.prepare_cache().await?;
+
+            tokio::fs::write(&cache_path, &data)
+                .await
+                .with_context(|| "Store item in cache")?;
         }
 
         Ok(item.clone())
     }
-}
 
-fn should_cache_item() -> bool {
-    cfg_if::cfg_if! {
-        if #[cfg(test)] {
-            true
-        } else {
+    async fn prepare_cache(&self) -> Result<()> {
+        if !self.cache_directory.exists() {
+            tokio::fs::create_dir_all(&self.cache_directory)
+                .await
+                .with_context(|| "Create cache directory")?;
+        }
+
+        loop {
             let disk_info = sys_info::disk_info().unwrap();
-            disk_info.free >= disk_info.total / 10
+            if disk_info.free >= disk_info.total / 10 {
+                return Ok(());
+            }
+
+            let mut dir_listing = tokio::fs::read_dir(&self.cache_directory)
+                .await
+                .with_context(|| "Get cache directory listing for cleaning")?;
+
+            let first_file = loop {
+                let Some(entry) = dir_listing
+                    .next_entry()
+                    .await
+                    .with_context(|| "Get file to clean")?
+                else {
+                    bail!("Not enough disk space, but no files in cache to delete");
+                };
+
+                if entry
+                    .metadata()
+                    .await
+                    .with_context(|| "Get metadata of file to clean")?
+                    .is_file()
+                {
+                    break entry;
+                }
+            };
+
+            tokio::fs::remove_file(first_file.path())
+                .await
+                .with_context(|| "Delete file in cache to make space")?;
         }
     }
 }
