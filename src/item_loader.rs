@@ -3,10 +3,10 @@ use anyhow::{bail, Context, Result};
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
-use sysinfo::Disks;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use sysinfo::Disks;
 
 pub(crate) struct ItemLoader {
     client: Client,
