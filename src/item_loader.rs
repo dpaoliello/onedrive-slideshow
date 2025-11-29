@@ -3,7 +3,9 @@ use anyhow::{bail, Context, Result};
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
-use std::path::PathBuf;
+use sysinfo::Disks;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(crate) struct ItemLoader {
@@ -185,8 +187,7 @@ impl ItemLoader {
         }
 
         loop {
-            let disk_info = sys_info::disk_info().unwrap();
-            if disk_info.free >= disk_info.total / 10 {
+            if get_free_space_percent_for_path(&self.cache_directory)? >= 10.0 {
                 return Ok(());
             }
 
@@ -218,6 +219,18 @@ impl ItemLoader {
                 .with_context(|| "Delete file in cache to make space")?;
         }
     }
+}
+
+fn get_free_space_percent_for_path(path: &Path) -> Result<f32> {
+    let resolved_path = fs::canonicalize(path)?;
+
+    for disk in &Disks::new_with_refreshed_list() {
+        if resolved_path.starts_with(fs::canonicalize(disk.mount_point())?) {
+            return Ok(disk.available_space() as f32 / disk.total_space() as f32 * 100.0);
+        }
+    }
+
+    Err(anyhow::anyhow!("No matching disk found"))
 }
 
 #[tokio::test(flavor = "multi_thread")]

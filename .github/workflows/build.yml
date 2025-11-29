@@ -36,6 +36,9 @@ jobs:
         run: sudo apt update && sudo apt install libwebkit2gtk-4.1-dev
         if: ${{ matrix.os == 'ubuntu-latest' }}
 
+      - name: Update rust
+        run: rustup install
+
       - name: Run tests
         run: cargo test --locked
 
