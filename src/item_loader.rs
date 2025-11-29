@@ -3,7 +3,8 @@ use anyhow::{bail, Context, Result};
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
+use std::time::Duration;
 
 pub(crate) struct ItemLoader {
     client: Client,
@@ -350,7 +351,7 @@ async fn load_image() {
     let item_loader = ItemLoader::new(&url, temp_dir.clone());
     let test_item = Item::Image("1".to_string());
     let actual_image = item_loader
-        .load_next("token", &[test_item.clone()])
+        .load_next("token", std::slice::from_ref(&test_item))
         .await
         .unwrap();
     assert_eq!(actual_image, test_item);
@@ -366,7 +367,7 @@ async fn load_image() {
     // Loading again should use the cached image.
     content_mock.remove();
     let actual_image = item_loader
-        .load_next("token", &[test_item.clone()])
+        .load_next("token", std::slice::from_ref(&test_item))
         .await
         .unwrap();
     assert_eq!(actual_image, test_item);
@@ -381,7 +382,7 @@ async fn load_image() {
 
     let test_item = Item::Image("2".to_string());
     let actual_image = item_loader
-        .load_next("token", &[test_item.clone()])
+        .load_next("token", std::slice::from_ref(&test_item))
         .await
         .unwrap();
     assert_eq!(actual_image, test_item);

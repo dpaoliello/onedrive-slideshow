@@ -60,7 +60,7 @@ fn main() -> Result<(), wry::Error> {
             };
 
             let mut web_context = WebContext::new(Some(CACHE_DIRECTORY.join("webview")));
-            let builder = WebViewBuilder::with_web_context(&mut web_context)
+            let builder = WebViewBuilder::new_with_web_context(&mut web_context)
                 .with_asynchronous_custom_protocol("slideshow".to_string(), protocol_handler)
                 .with_ipc_handler(handler)
                 .with_accept_first_mouse(true);
@@ -323,7 +323,7 @@ async fn load_multiple_images() {
         .ok()
         .unwrap();
     assert_eq!(actual_image, test_item);
-    assert_eq!(all_items.items, &[test_item.clone()]);
+    assert_eq!(all_items.items, std::slice::from_ref(&test_item));
     config_content_mock.assert();
     d1_mock.assert();
     content_mock.assert();
@@ -338,7 +338,7 @@ async fn load_multiple_images() {
             .ok()
             .unwrap();
     assert_eq!(actual_image, test_item);
-    assert_eq!(all_items.items, &[test_item.clone()]);
+    assert_eq!(all_items.items, std::slice::from_ref(&test_item));
 
     // Make the item list expire: this will cause it to reload, but the item should come from cache.
     let config_content_mock = config_content_mock.create();
@@ -349,7 +349,7 @@ async fn load_multiple_images() {
         .ok()
         .unwrap();
     assert_eq!(actual_image, test_item);
-    assert_eq!(all_items.items, &[test_item.clone()]);
+    assert_eq!(all_items.items, std::slice::from_ref(&test_item));
     config_content_mock.assert();
     d1_mock.assert();
 }
