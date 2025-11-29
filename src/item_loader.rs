@@ -3,7 +3,10 @@ use anyhow::{bail, Context, Result};
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
-use std::{path::PathBuf, time::Duration};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use sysinfo::Disks;
 
 pub(crate) struct ItemLoader {
     client: Client,
@@ -184,8 +187,7 @@ impl ItemLoader {
         }
 
         loop {
-            let disk_info = sys_info::disk_info().unwrap();
-            if disk_info.free >= disk_info.total / 10 {
+            if get_free_space_percent_for_path(&self.cache_directory)? >= 10.0 {
                 return Ok(());
             }
 
@@ -217,6 +219,18 @@ impl ItemLoader {
                 .with_context(|| "Delete file in cache to make space")?;
         }
     }
+}
+
+fn get_free_space_percent_for_path(path: &Path) -> Result<f32> {
+    let resolved_path = fs::canonicalize(path)?;
+
+    for disk in &Disks::new_with_refreshed_list() {
+        if resolved_path.starts_with(fs::canonicalize(disk.mount_point())?) {
+            return Ok(disk.available_space() as f32 / disk.total_space() as f32 * 100.0);
+        }
+    }
+
+    Err(anyhow::anyhow!("No matching disk found"))
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -350,7 +364,7 @@ async fn load_image() {
     let item_loader = ItemLoader::new(&url, temp_dir.clone());
     let test_item = Item::Image("1".to_string());
     let actual_image = item_loader
-        .load_next("token", &[test_item.clone()])
+        .load_next("token", std::slice::from_ref(&test_item))
         .await
         .unwrap();
     assert_eq!(actual_image, test_item);
@@ -366,7 +380,7 @@ async fn load_image() {
     // Loading again should use the cached image.
     content_mock.remove();
     let actual_image = item_loader
-        .load_next("token", &[test_item.clone()])
+        .load_next("token", std::slice::from_ref(&test_item))
         .await
         .unwrap();
     assert_eq!(actual_image, test_item);
@@ -381,7 +395,7 @@ async fn load_image() {
 
     let test_item = Item::Image("2".to_string());
     let actual_image = item_loader
-        .load_next("token", &[test_item.clone()])
+        .load_next("token", std::slice::from_ref(&test_item))
         .await
         .unwrap();
     assert_eq!(actual_image, test_item);
