@@ -1,11 +1,11 @@
 #[cfg(windows)]
 mod windows {
-    use windows_sys::core::PCWSTR;
-    use windows_sys::w;
     use windows_sys::Win32::Foundation::{FILETIME, TRUE};
     use windows_sys::Win32::Security::Credentials::{
-        CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
+        CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredFree, CredReadW, CredWriteW,
     };
+    use windows_sys::core::PCWSTR;
+    use windows_sys::w;
 
     const TARGET_NAME: PCWSTR = w!("OneDriveSlideShow");
 

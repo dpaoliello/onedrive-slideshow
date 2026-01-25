@@ -1,5 +1,5 @@
 use crate::http::{AppendPaths, Client};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rand::Rng;
 use reqwest::Url;
 use serde::Deserialize;
