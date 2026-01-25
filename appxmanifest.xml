@@ -12,12 +12,12 @@
   IgnorableNamespaces="uap uap2 uap3 uap10 desktop desktop6 rescap">
 
   <Identity
-    Name="od-slideshow"
+    Name="onedrive-slideshow"
     Publisher="CN=Daniel Paoliello"
-    Version="1.0.0.0" />
+    Version="0.1.1.0" />
 
   <Properties>
-    <DisplayName>od-slideshow</DisplayName>
+    <DisplayName>onedrive-slideshow</DisplayName>
     <PublisherDisplayName>Daniel Paoliello</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -31,18 +31,17 @@
   </Resources>
 
   <Applications>
-    <Application Id="odSlideshow"
+    <Application Id="onedriveSlideshow"
       Executable="onedrive-slideshow.exe"
       EntryPoint="Windows.FullTrustApplication"
       uap10:TrustLevel="mediumIL"
       uap10:RuntimeBehavior="packagedClassicApp">
       <uap:VisualElements
-        DisplayName="od-slideshow"
+        DisplayName="onedrive-slideshow"
         Description="A Simple Standalone Slideshow that pulls from your Microsoft OneDrive"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">
-        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
       </uap:VisualElements>
     </Application>
   </Applications>
