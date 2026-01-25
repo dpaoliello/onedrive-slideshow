@@ -34,7 +34,7 @@ impl Client {
                             // Retry on DNS lookup failure.
                             #[cfg(windows)]
                             Some(windows_sys::Win32::Networking::WinSock::WSAHOST_NOT_FOUND) => {
-                                return true
+                                return true;
                             }
                             _ => break,
                         }
