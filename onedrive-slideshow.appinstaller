@@ -5,10 +5,10 @@
     Uri="https://raw.githubusercontent.com/dpaoliello/onedrive-slideshow/refs/heads/main/onedrive-slideshow.appinstaller" >
 
     <MainPackage
-        Name="OneDriveSlideshow"
+        Name="onedrive-slideshow"
         Publisher="CN=Daniel Paoliello"
-        Version="0.1.1.0"
-        Uri="https://github.com/dpaoliello/onedrive-slideshow/releases/download/v0.1.1/onedrive-slideshow.msix" />
+        Version="0.1.2.0"
+        Uri="https://github.com/dpaoliello/onedrive-slideshow/releases/download/v0.1.2/onedrive-slideshow.msix" />
 
     <UpdateSettings>
         <OnLaunch 

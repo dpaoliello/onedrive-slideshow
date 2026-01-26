@@ -8,6 +8,7 @@ on:
   pull_request:
 
 permissions:
+  id-token: write
   contents: read
 
 # This allows a subsequently queued workflow run to interrupt previous runs
@@ -58,6 +59,36 @@ jobs:
           copy ./target/release/*.exe ./dist
           winapp pack ./dist
         if: ${{ matrix.os == 'windows-latest' }}
+
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        if: ${{ matrix.os == 'windows-latest' && github.ref == 'refs/heads/main' }}
+
+      - name: Sign files with Artifact Signing
+        uses: azure/artifact-signing-action@v1
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          signing-account-name: dpaoliellosigning
+          certificate-profile-name: appsigning
+          files: ${{ github.workspace }}/dist/onedrive_slideshow.msix
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+        if: ${{ matrix.os == 'windows-latest' && github.ref == 'refs/heads/main' }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
