@@ -74,7 +74,7 @@ jobs:
           endpoint: https://eus.codesigning.azure.net/
           signing-account-name: dpaoliellosigning
           certificate-profile-name: appsigning
-          files: ${{ github.workspace }}\onedrive_slideshow.msix
+          files: ${{ github.workspace }}\onedrive-slideshow.msix
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
