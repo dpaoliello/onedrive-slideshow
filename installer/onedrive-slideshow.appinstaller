@@ -2,7 +2,7 @@
 <AppInstaller
     xmlns="http://schemas.microsoft.com/appx/appinstaller/2021"
     Version="1.0.0.0"
-    Uri="https://raw.githubusercontent.com/dpaoliello/onedrive-slideshow/refs/heads/main/onedrive-slideshow.appinstaller" >
+    Uri="https://dpaoliello.github.io/onedrive-slideshow/onedrive-slideshow.appinstaller" >
 
     <MainPackage
         Name="onedrive-slideshow"
@@ -16,7 +16,7 @@
     </UpdateSettings>
 
     <UpdateUris>
-        <UpdateUri>https://raw.githubusercontent.com/dpaoliello/onedrive-slideshow/refs/heads/main/onedrive-slideshow.appinstaller</UpdateUri>
+        <UpdateUri>https://dpaoliello.github.io/onedrive-slideshow/onedrive-slideshow.appinstaller</UpdateUri>
     </UpdateUris>
 
 </AppInstaller>
