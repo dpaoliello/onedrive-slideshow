@@ -1,0 +1,7 @@
+{
+    "directories":
+    [
+        "Pictures"
+    ],
+    "interval": 15
+}
