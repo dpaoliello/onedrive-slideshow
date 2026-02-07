@@ -7,8 +7,8 @@
     <MainPackage
         Name="onedrive-slideshow"
         Publisher="CN=Daniel Paoliello, O=Daniel Paoliello, L=Redmond, S=Washington, C=US"
-        Version="0.1.5.0"
-        Uri="https://github.com/dpaoliello/onedrive-slideshow/releases/download/v0.1.5/onedrive-slideshow.msix" />
+        Version="0.1.6.0"
+        Uri="https://github.com/dpaoliello/onedrive-slideshow/releases/download/v0.1.6/onedrive-slideshow.msix" />
 
     <UpdateSettings>
         <OnLaunch 
