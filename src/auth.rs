@@ -1,6 +1,6 @@
 use crate::cred_store;
 use crate::http::{AppendPaths, Client};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use reqwest::{StatusCode, Url};
 use serde::Deserialize;
 use std::time::{Duration, Instant};
