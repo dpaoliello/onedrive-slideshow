@@ -1,6 +1,6 @@
 use crate::http::{AppendPaths, Client};
 use anyhow::{Context, Result, bail};
-use rand::Rng;
+use rand::RngExt;
 use reqwest::Url;
 use serde::Deserialize;
 use std::fs;
