@@ -57,7 +57,7 @@ jobs:
           winget install Microsoft.WinAppCli --source winget --exact --silent --nowarn --disable-interactivity
           mkdir ./dist
           copy ./target/release/*.exe ./dist
-          winapp pack ./dist
+          winapp pack ./dist --output onedrive-slideshow.msix
         if: ${{ matrix.os == 'windows-latest' }}
 
       - name: Azure login
