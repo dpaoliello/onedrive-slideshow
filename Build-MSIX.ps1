@@ -9,4 +9,4 @@ if (Test-Path -Path $distPath) {
 
 New-Item -ItemType Directory -Path $distPath | Out-Null
 Copy-Item -Path $buildOutputPath -Destination $distPath
-& winapp pack $distPath
+& winapp pack $distPath --output (Join-Path $PSScriptRoot "onedrive-slideshow.msix")
