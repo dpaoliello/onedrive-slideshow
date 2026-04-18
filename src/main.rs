@@ -36,8 +36,17 @@ enum UserEvent {
 const ON_ERROR_REFRESH_TIME: Duration = Duration::from_secs(1);
 const ITEM_LIST_REFRESH_TIME: Duration = Duration::from_secs(60 * 60);
 
-static CACHE_DIRECTORY: LazyLock<PathBuf> =
-    LazyLock::new(|| std::env::temp_dir().join("onedrive_slideshow"));
+static CACHE_DIRECTORY: LazyLock<PathBuf> = LazyLock::new(|| {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--cache-dir"
+            && let Some(dir) = args.next()
+        {
+            return PathBuf::from(dir);
+        }
+    }
+    std::env::temp_dir().join("onedrive_slideshow")
+});
 
 fn main() -> Result<(), wry::Error> {
     tokio::runtime::Builder::new_multi_thread()
