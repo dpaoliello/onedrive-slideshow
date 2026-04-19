@@ -14,7 +14,8 @@
   <Identity
     Name="onedrive-slideshow"
     Publisher="CN=Daniel Paoliello, O=Daniel Paoliello, L=Redmond, S=Washington, C=US"
-    Version="0.1.9.0" />
+    Version="0.1.10.0"
+    ProcessorArchitecture="neutral" />
 
   <Properties>
     <DisplayName>onedrive-slideshow</DisplayName>
