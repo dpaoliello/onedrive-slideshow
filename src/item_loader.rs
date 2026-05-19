@@ -47,14 +47,14 @@ struct DriveImage {
 
 #[derive(Deserialize)]
 struct DriveVideo {
-    duration: u64,
+    duration: Option<u64>,
 }
 
 #[derive(Deserialize)]
 struct DriveFolder {
     #[expect(dead_code)]
     #[serde(rename = "childCount")]
-    child_count: u32,
+    child_count: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -141,7 +141,10 @@ impl ItemLoader {
                         id,
                         video: Some(DriveVideo { duration }),
                         ..
-                    } => all_items.push(Item::Video(id, Duration::from_millis(duration))),
+                    } => all_items.push(Item::Video(
+                        id,
+                        Duration::from_millis(duration.unwrap_or(0)),
+                    )),
                     DriveItem {
                         id,
                         folder: Some(_),
