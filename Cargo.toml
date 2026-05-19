@@ -1,6 +1,6 @@
 [package]
 name = "onedrive_slideshow"
-version = "0.1.11"
+version = "0.1.12"
 edition = "2024"
 
 [dependencies]
@@ -12,7 +12,7 @@ rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["charset", "form", "gzip", "http2", "json", "native-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sysinfo = "0.38"
+sysinfo = "0.39"
 tao = "0.35"
 tokio = { version = "1.49", features = ["fs", "rt", "net", "time", "rt-multi-thread", "macros"] }
 wry = "0.55"
