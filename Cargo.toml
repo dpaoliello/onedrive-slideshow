@@ -1,6 +1,6 @@
 [package]
 name = "onedrive_slideshow"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 
 [dependencies]
@@ -8,6 +8,8 @@ anyhow = "1.0"
 bytes = "1.9"
 cfg-if = "1.0"
 crossbeam-utils = "0.8"
+html-escape = "0.2"
+kamadak-exif = "0.6"
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["charset", "form", "gzip", "http2", "json", "native-tls"] }
 serde = { version = "1.0", features = ["derive"] }

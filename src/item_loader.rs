@@ -182,6 +182,17 @@ impl ItemLoader {
         Ok(item.clone())
     }
 
+    /// Reads the caption embedded in the cached file for `item`: the EXIF
+    /// `ImageDescription` for photos, or the MP4 `description` metadata for videos.
+    pub async fn read_description(&self, item: &Item) -> Option<String> {
+        let path = self.cache_directory.join(item.get_id());
+        let data = tokio::fs::read(&path).await.ok()?;
+        match item {
+            Item::Image(_) => read_jpeg_description(&data),
+            Item::Video(..) => read_mp4_description(&data),
+        }
+    }
+
     async fn prepare_cache(&self) -> Result<()> {
         if !self.cache_directory.exists() {
             tokio::fs::create_dir_all(&self.cache_directory)
@@ -222,6 +233,71 @@ impl ItemLoader {
                 .with_context(|| "Delete file in cache to make space")?;
         }
     }
+}
+
+fn read_jpeg_description(data: &[u8]) -> Option<String> {
+    let exif = exif::Reader::new()
+        .read_from_container(&mut std::io::Cursor::new(data))
+        .ok()?;
+    let field = exif.get_field(exif::Tag::ImageDescription, exif::In::PRIMARY)?;
+    if let exif::Value::Ascii(ref parts) = field.value {
+        let mut bytes = Vec::new();
+        for part in parts {
+            bytes.extend_from_slice(part);
+        }
+        let text = String::from_utf8_lossy(&bytes).trim().to_string();
+        return (!text.is_empty()).then_some(text);
+    }
+    None
+}
+
+/// Extracts the `description` (falling back to `comment`) text embedded by ffmpeg
+/// in an MP4's `moov/udta/meta/ilst` metadata.
+fn read_mp4_description(data: &[u8]) -> Option<String> {
+    let moov = find_mp4_box(data, b"moov")?;
+    let udta = find_mp4_box(moov, b"udta")?;
+    let meta = find_mp4_box(udta, b"meta")?;
+    // `meta` is a FullBox: skip its 4-byte version/flags before reading children.
+    let ilst = find_mp4_box(meta.get(4..)?, b"ilst")?;
+    let item = find_mp4_box(ilst, b"desc").or_else(|| find_mp4_box(ilst, b"\xa9cmt"))?;
+    let data_box = find_mp4_box(item, b"data")?;
+    // The `data` payload is 4 bytes of type + 4 bytes of locale, then the string.
+    let text = std::str::from_utf8(data_box.get(8..)?)
+        .ok()?
+        .trim()
+        .to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+/// Returns the payload of the first child box with the given four-byte type.
+fn find_mp4_box<'a>(data: &'a [u8], name: &[u8; 4]) -> Option<&'a [u8]> {
+    let mut pos = 0;
+    while pos + 8 <= data.len() {
+        let size = u32::from_be_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
+        let content_start;
+        let content_end;
+        if size == 1 {
+            // 64-bit extended size.
+            let large = u64::from_be_bytes(data.get(pos + 8..pos + 16)?.try_into().ok()?) as usize;
+            content_start = pos + 16;
+            content_end = pos.checked_add(large)?;
+        } else if size == 0 {
+            // Box extends to the end of the buffer.
+            content_start = pos + 8;
+            content_end = data.len();
+        } else {
+            content_start = pos + 8;
+            content_end = pos.checked_add(size)?;
+        }
+        if content_end > data.len() || content_end < content_start {
+            return None;
+        }
+        if &data[pos + 4..pos + 8] == name {
+            return data.get(content_start..content_end);
+        }
+        pos = content_end;
+    }
+    None
 }
 
 fn get_free_space_percent_for_path(path: &Path) -> Result<f32> {
