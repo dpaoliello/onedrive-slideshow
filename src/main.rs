@@ -159,13 +159,7 @@ fn main() -> Result<(), wry::Error> {
                         UserEvent::PreviousItem => {
                             if let Some((item, interval, metadata)) = previous_item.take() {
                                 delay_until.store(Instant::now() + interval);
-                                load_item(
-                                    item,
-                                    interval,
-                                    metadata,
-                                    &mut previous_item,
-                                    &webview,
-                                );
+                                load_item(item, interval, metadata, &mut previous_item, &webview);
                             }
                         }
                         UserEvent::Error(err) => {
