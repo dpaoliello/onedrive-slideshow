@@ -8,7 +8,7 @@ mod item_loader;
 use anyhow::Result;
 use auth::Authenticator;
 use crossbeam_utils::atomic::AtomicCell;
-use item_loader::{Item, ItemLoader};
+use item_loader::{Item, ItemLoader, ItemMetadata};
 use std::{
     borrow::Cow,
     path::PathBuf,
@@ -30,7 +30,7 @@ enum UserEvent {
     Error(anyhow::Error),
     Loading,
     WaitingForAuth { auth_url: String, code: String },
-    LoadItem(Item, Duration, Option<String>),
+    LoadItem(Item, Duration, ItemMetadata),
 }
 
 const ON_ERROR_REFRESH_TIME: Duration = Duration::from_secs(1);
@@ -99,29 +99,36 @@ fn main() -> Result<(), wry::Error> {
                 event_loop.create_proxy(),
                 delay_until.clone(),
             ));
-            let mut current_item: Option<(Item, Duration, Option<String>)> = None;
-            let mut previous_item: Option<(Item, Duration, Option<String>)> = None;
+            let mut current_item: Option<(Item, Duration, ItemMetadata)> = None;
+            let mut previous_item: Option<(Item, Duration, ItemMetadata)> = None;
 
             let mut load_item =
                 move |item: Item,
                       interval: Duration,
-                      description: Option<String>,
-                      previous_item: &mut Option<(Item, Duration, Option<String>)>,
+                      metadata: ItemMetadata,
+                      previous_item: &mut Option<(Item, Duration, ItemMetadata)>,
                       webview: &wry::WebView| {
-                    let caption = match description.as_deref() {
+                    let date = metadata
+                        .date
+                        .as_deref()
+                        .map(|d| html_escape::encode_text(d).into_owned())
+                        .unwrap_or_default();
+                    let caption = match metadata.description.as_deref() {
                         Some(text) => html_escape::encode_text(text).into_owned(),
                         None => "(No description)".to_string(),
                     };
                     let html = match &item {
                         Item::Image(id) => include_str!("../ui/image.html")
                             .replace("IMAGE_SRC", id)
+                            .replace("DATE_TEXT", &date)
                             .replace("DESCRIPTION_TEXT", &caption),
                         Item::Video(id, _) => include_str!("../ui/video.html")
                             .replace("VIDEO_SRC", id)
+                            .replace("DATE_TEXT", &date)
                             .replace("DESCRIPTION_TEXT", &caption),
                     };
                     *previous_item = current_item.take();
-                    current_item = Some((item, interval, description));
+                    current_item = Some((item, interval, metadata));
                     webview.load_html(&html).unwrap();
                 };
 
@@ -146,19 +153,13 @@ fn main() -> Result<(), wry::Error> {
                                 .replace("CODE", &code);
                             webview.load_html(&html).unwrap();
                         }
-                        UserEvent::LoadItem(item, interval, description) => {
-                            load_item(item, interval, description, &mut previous_item, &webview)
+                        UserEvent::LoadItem(item, interval, metadata) => {
+                            load_item(item, interval, metadata, &mut previous_item, &webview)
                         }
                         UserEvent::PreviousItem => {
-                            if let Some((item, interval, description)) = previous_item.take() {
+                            if let Some((item, interval, metadata)) = previous_item.take() {
                                 delay_until.store(Instant::now() + interval);
-                                load_item(
-                                    item,
-                                    interval,
-                                    description,
-                                    &mut previous_item,
-                                    &webview,
-                                );
+                                load_item(item, interval, metadata, &mut previous_item, &webview);
                             }
                         }
                         UserEvent::Error(err) => {
@@ -234,8 +235,8 @@ async fn item_load_loop(proxy: EventLoopProxy<UserEvent>, delay_until: Arc<Atomi
                     Item::Image(_) => all_items.interval,
                     Item::Video(_, duration) => std::cmp::max(*duration * 2, all_items.interval),
                 };
-                let description = loader.read_description(&item).await;
-                let _ = proxy.send_event(UserEvent::LoadItem(item, interval, description));
+                let metadata = loader.read_metadata(&item).await;
+                let _ = proxy.send_event(UserEvent::LoadItem(item, interval, metadata));
                 (Some(all_items), interval)
             }
             Err((err, all_items)) => {

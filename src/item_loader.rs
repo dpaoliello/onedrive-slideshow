@@ -7,6 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use sysinfo::Disks;
+use time::macros::format_description;
+use time::{Date, Month, OffsetDateTime};
 
 pub(crate) struct ItemLoader {
     client: Client,
@@ -28,6 +30,13 @@ impl Item {
             Item::Image(id) | Item::Video(id, ..) => id,
         }
     }
+}
+
+/// Caption metadata read from a cached media file.
+#[derive(Clone, Default)]
+pub(crate) struct ItemMetadata {
+    pub description: Option<String>,
+    pub date: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -182,14 +191,22 @@ impl ItemLoader {
         Ok(item.clone())
     }
 
-    /// Reads the caption embedded in the cached file for `item`: the EXIF
-    /// `ImageDescription` for photos, or the MP4 `description` metadata for videos.
-    pub async fn read_description(&self, item: &Item) -> Option<String> {
+    /// Reads the caption metadata (description and capture date) embedded in the
+    /// cached file for `item`.
+    pub async fn read_metadata(&self, item: &Item) -> ItemMetadata {
         let path = self.cache_directory.join(item.get_id());
-        let data = tokio::fs::read(&path).await.ok()?;
+        let Ok(data) = tokio::fs::read(&path).await else {
+            return ItemMetadata::default();
+        };
         match item {
-            Item::Image(_) => read_jpeg_description(&data),
-            Item::Video(..) => read_mp4_description(&data),
+            Item::Image(_) => ItemMetadata {
+                description: read_jpeg_description(&data),
+                date: read_jpeg_date(&data),
+            },
+            Item::Video(..) => ItemMetadata {
+                description: read_mp4_description(&data),
+                date: read_mp4_date(&data),
+            },
         }
     }
 
@@ -251,6 +268,33 @@ fn read_jpeg_description(data: &[u8]) -> Option<String> {
     None
 }
 
+/// Reads the capture date from the EXIF `DateTimeOriginal` tag (falling back to
+/// `DateTime`), formatted as e.g. "April 7, 2026".
+fn read_jpeg_date(data: &[u8]) -> Option<String> {
+    let exif = exif::Reader::new()
+        .read_from_container(&mut std::io::Cursor::new(data))
+        .ok()?;
+    let field = exif
+        .get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY)
+        .or_else(|| exif.get_field(exif::Tag::DateTime, exif::In::PRIMARY))?;
+    if let exif::Value::Ascii(ref parts) = field.value {
+        let mut bytes = Vec::new();
+        for part in parts {
+            bytes.extend_from_slice(part);
+        }
+        // EXIF date-time is "YYYY:MM:DD HH:MM:SS"; we only need the date part.
+        let text = String::from_utf8_lossy(&bytes);
+        let date = text.split_whitespace().next()?;
+        let mut fields = date.split(':');
+        let year: i32 = fields.next()?.trim().parse().ok()?;
+        let month: u8 = fields.next()?.parse().ok()?;
+        let day: u8 = fields.next()?.parse().ok()?;
+        let date = Date::from_calendar_date(year, Month::try_from(month).ok()?, day).ok()?;
+        return format_date(date);
+    }
+    None
+}
+
 /// Extracts the `description` (falling back to `comment`) text embedded by ffmpeg
 /// in an MP4's `moov/udta/meta/ilst` metadata.
 fn read_mp4_description(data: &[u8]) -> Option<String> {
@@ -298,6 +342,35 @@ fn find_mp4_box<'a>(data: &'a [u8], name: &[u8; 4]) -> Option<&'a [u8]> {
         pos = content_end;
     }
     None
+}
+
+/// Reads the capture date from the MP4 movie header (`moov/mvhd`) creation time,
+/// formatted as e.g. "June 14, 2026".
+fn read_mp4_date(data: &[u8]) -> Option<String> {
+    let moov = find_mp4_box(data, b"moov")?;
+    let mvhd = find_mp4_box(moov, b"mvhd")?;
+    // `mvhd` is a FullBox: 1-byte version, 3-byte flags, then the creation time
+    // (8 bytes for version 1, otherwise 4 bytes).
+    let version = *mvhd.first()?;
+    let creation_time = if version == 1 {
+        u64::from_be_bytes(mvhd.get(4..12)?.try_into().ok()?)
+    } else {
+        u32::from_be_bytes(mvhd.get(4..8)?.try_into().ok()?) as u64
+    };
+    if creation_time == 0 {
+        return None;
+    }
+    // MP4 times are seconds since 1904-01-01 UTC.
+    const SECONDS_1904_TO_1970: i64 = 2_082_844_800;
+    let unix_seconds = creation_time as i64 - SECONDS_1904_TO_1970;
+    let datetime = OffsetDateTime::from_unix_timestamp(unix_seconds).ok()?;
+    format_date(datetime.date())
+}
+
+/// Formats a civil date as e.g. "April 7, 2026".
+fn format_date(date: Date) -> Option<String> {
+    let format = format_description!("[month repr:long] [day padding:none], [year]");
+    date.format(&format).ok()
 }
 
 fn get_free_space_percent_for_path(path: &Path) -> Result<f32> {
