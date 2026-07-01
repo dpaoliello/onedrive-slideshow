@@ -30,7 +30,7 @@ enum UserEvent {
     Error(anyhow::Error),
     Loading,
     WaitingForAuth { auth_url: String, code: String },
-    LoadItem(Item, Duration),
+    LoadItem(Item, Duration, Option<String>),
 }
 
 const ON_ERROR_REFRESH_TIME: Duration = Duration::from_secs(1);
@@ -99,21 +99,31 @@ fn main() -> Result<(), wry::Error> {
                 event_loop.create_proxy(),
                 delay_until.clone(),
             ));
-            let mut current_item = None;
-            let mut previous_item = None;
+            let mut current_item: Option<(Item, Duration, Option<String>)> = None;
+            let mut previous_item: Option<(Item, Duration, Option<String>)> = None;
 
-            let mut load_item = move |item: Item,
-                                      interval: Duration,
-                                      previous_item: &mut Option<(Item, Duration)>,
-                                      webview: &wry::WebView| {
-                let html = match &item {
-                    Item::Image(id) => include_str!("../ui/image.html").replace("IMAGE_SRC", id),
-                    Item::Video(id, _) => include_str!("../ui/video.html").replace("VIDEO_SRC", id),
+            let mut load_item =
+                move |item: Item,
+                      interval: Duration,
+                      description: Option<String>,
+                      previous_item: &mut Option<(Item, Duration, Option<String>)>,
+                      webview: &wry::WebView| {
+                    let caption = match description.as_deref() {
+                        Some(text) => html_escape::encode_text(text).into_owned(),
+                        None => "(No description)".to_string(),
+                    };
+                    let html = match &item {
+                        Item::Image(id) => include_str!("../ui/image.html")
+                            .replace("IMAGE_SRC", id)
+                            .replace("DESCRIPTION_TEXT", &caption),
+                        Item::Video(id, _) => include_str!("../ui/video.html")
+                            .replace("VIDEO_SRC", id)
+                            .replace("DESCRIPTION_TEXT", &caption),
+                    };
+                    *previous_item = current_item.take();
+                    current_item = Some((item, interval, description));
+                    webview.load_html(&html).unwrap();
                 };
-                *previous_item = current_item.take();
-                current_item = Some((item, interval));
-                webview.load_html(&html).unwrap();
-            };
 
             event_loop.run(move |event, _, control_flow| {
                 *control_flow = ControlFlow::Wait;
@@ -136,13 +146,19 @@ fn main() -> Result<(), wry::Error> {
                                 .replace("CODE", &code);
                             webview.load_html(&html).unwrap();
                         }
-                        UserEvent::LoadItem(item, interval) => {
-                            load_item(item, interval, &mut previous_item, &webview)
+                        UserEvent::LoadItem(item, interval, description) => {
+                            load_item(item, interval, description, &mut previous_item, &webview)
                         }
                         UserEvent::PreviousItem => {
-                            if let Some((item, interval)) = previous_item.take() {
+                            if let Some((item, interval, description)) = previous_item.take() {
                                 delay_until.store(Instant::now() + interval);
-                                load_item(item, interval, &mut previous_item, &webview);
+                                load_item(
+                                    item,
+                                    interval,
+                                    description,
+                                    &mut previous_item,
+                                    &webview,
+                                );
                             }
                         }
                         UserEvent::Error(err) => {
@@ -218,7 +234,8 @@ async fn item_load_loop(proxy: EventLoopProxy<UserEvent>, delay_until: Arc<Atomi
                     Item::Image(_) => all_items.interval,
                     Item::Video(_, duration) => std::cmp::max(*duration * 2, all_items.interval),
                 };
-                let _ = proxy.send_event(UserEvent::LoadItem(item, interval));
+                let description = loader.read_description(&item).await;
+                let _ = proxy.send_event(UserEvent::LoadItem(item, interval, description));
                 (Some(all_items), interval)
             }
             Err((err, all_items)) => {
